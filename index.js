@@ -1,5 +1,7 @@
 "use strict";
 
+let bot = null;
+let botRunning = false;
 const { addLog, getLogs } = require("./logger");
 const mineflayer = require("mineflayer");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
@@ -973,21 +975,45 @@ app.get("/logs", (req, res) => {
   `);
 });
 
-let botRunning = true;
-
 app.post("/start", (req, res) => {
-  if (botRunning) return res.json({ success: false, msg: "Already running" });
+  if (botRunning) {
+    return res.json({ success: false, msg: "Already running" });
+  }
 
   botRunning = true;
-  const bot = mineflayer.createBot({
-  host: process.env.HOST,
-  port: process.env.PORT,
-  username: process.env.USERNAME
+
+  bot = mineflayer.createBot({
+    host: process.env.HOST,
+    port: process.env.PORT,
+    username: process.env.USERNAME
+  });
+
+  bot.once("spawn", () => {
+    addLog("[Bot] Spawned");
+
+    startLoveModule(bot);
+  });
+
+  bot.on("end", () => {
+    addLog("[Bot] Disconnected");
+
+    // auto-restart ONLY if botRunning is still true
+    if (botRunning) {
+      setTimeout(() => {
+        addLog("[Bot] Auto restarting...");
+        app.post("/start", { }); // NOT ideal but keeps logic simple
+      }, 5000);
+    }
+  });
+
+  bot.on("error", (err) => {
+    addLog("[Bot Error] " + err.message);
+  });
+
+  addLog("[Control] Bot started");
+  res.json({ success: true });
 });
 
-bot.once("spawn", () => {
-  startLoveModule(bot);
-});
   addLog("[Control] Bot started");
 
   res.json({ success: true });
