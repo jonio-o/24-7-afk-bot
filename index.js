@@ -1395,6 +1395,130 @@ function scheduleReconnect() {
 // MODULE INITIALIZATION
 // ============================================================
 function initializeModules(bot, mcData, defaultMove) {
+
+  // ============================================================
+// 💘 DATING SIM MODULE
+// ============================================================
+
+const datingSim = {
+  points: {},
+  level: {},
+  leaderboard: {},
+
+  init() {
+    addLog("[DatingSim] Initialized");
+
+    // auto-save leaderboard every 60s
+    addInterval(() => {
+      this.saveLeaderboard();
+    }, 60000);
+  },
+
+  getUser(user) {
+    if (!this.points[user]) {
+      this.points[user] = 0;
+      this.level[user] = 1;
+    }
+  },
+
+  addPoints(user, amount) {
+    this.getUser(user);
+
+    const levelMultiplier = this.level[user] * 0.15;
+    const final = Math.floor(amount * (1 + levelMultiplier));
+
+    this.points[user] += final;
+
+    // level up system
+    if (this.points[user] > this.level[user] * 100) {
+      this.level[user]++;
+      addLog(`[DatingSim] ${user} leveled up to ${this.level[user]}`);
+    }
+
+    return final;
+  },
+
+  removePoints(user, amount) {
+    this.getUser(user);
+    this.points[user] -= amount;
+
+    if (this.points[user] < 0) this.points[user] = 0;
+  },
+
+  getQuestionDifficulty(user) {
+    this.getUser(user);
+    return Math.min(10, this.level[user]);
+  },
+
+  generateQuestion(user) {
+    const difficulty = this.getQuestionDifficulty(user);
+
+    // “AI-like” progressive questions
+    const questions = [
+      {
+        q: "What is the emotional meaning of trust in relationships?",
+        a: "stability",
+      },
+      {
+        q: "If someone avoids communication, what is a healthy response?",
+        a: "talk calmly",
+      },
+      {
+        q: "What matters more: control or understanding?",
+        a: "understanding",
+      },
+      {
+        q: "What is the core of a strong relationship?",
+        a: "respect",
+      },
+    ];
+
+    const index = Math.min(difficulty - 1, questions.length - 1);
+    return questions[index];
+  },
+
+  ask(bot, user) {
+    const q = this.generateQuestion(user);
+
+    bot.chat(`💘 Question for ${user}: ${q.q}`);
+    bot.chat(`Reply using: !answer <your answer>`);
+  },
+
+  answer(bot, user, msg) {
+    const q = this.generateQuestion(user);
+    const answer = msg.toLowerCase().replace("!answer", "").trim();
+
+    const difficulty = this.getQuestionDifficulty(user);
+
+    const reward = 10 + difficulty * 5;
+    const penalty = 8 + difficulty * 6;
+
+    if (answer.includes(q.a)) {
+      const gained = this.addPoints(user, reward);
+      bot.chat(`✅ Correct! +${gained} points`);
+      addLog(`[DatingSim] ${user} answered correctly`);
+    } else {
+      this.removePoints(user, penalty);
+      bot.chat(`❌ Wrong! -${penalty} points`);
+      addLog(`[DatingSim] ${user} answered incorrectly`);
+    }
+  },
+
+  leaderboardTop() {
+    return Object.entries(this.points)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([u, p], i) => `${i + 1}. ${u} - ${p} pts`)
+      .join("\n");
+  },
+
+  saveLeaderboard() {
+    // optional persistence hook
+  },
+};
+
+datingSim.init();
+  
   addLog("[Modules] Initializing all modules...");
 
   // ---------- AUTO AUTH (REACTIVE) ----------
@@ -1854,6 +1978,29 @@ function bedModule(bot, mcData) {
 // FIX: wire up discord.events.chat flag
 function chatModule(bot) {
   bot.on("chat", (username, message) => {
+
+// 💘 Dating sim commands
+if (message.startsWith("!love")) {
+  datingSim.ask(bot, username);
+  return;
+}
+
+if (message.startsWith("!answer")) {
+  datingSim.answer(bot, username, message);
+  return;
+}
+
+if (message === "!points") {
+  datingSim.getUser(username);
+  bot.chat(`💖 ${username} has ${datingSim.points[username]} points (Level ${datingSim.level[username]})`);
+  return;
+}
+
+if (message === "!leaderboard") {
+  bot.chat("💘 Top Lovers:\n" + datingSim.leaderboardTop());
+  return;
+}
+    
     if (!bot || username === bot.username) return;
 
     try {
