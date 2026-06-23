@@ -26,6 +26,46 @@ let botState = {
   wasThrottled: false,
 };
 
+// =============================
+// Dating Sim Module (GLOBAL DATA)
+// =============================
+
+const points = {};
+const loveStatus = {};
+
+const questions = [
+  "Do you like Minecraft?",
+  "Would you mine with me?",
+  "Do you trust me?",
+  "Would you share diamonds with me?",
+  "Do you want to explore together?",
+  "Would you protect me in PvP?"
+];
+
+function getRandomPlayer(bot) {
+  const players = Object.keys(bot.players || {});
+  const list = players.filter(p => p !== bot.username);
+  if (!list.length) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function getRandomQuestion() {
+  return questions[Math.floor(Math.random() * questions.length)];
+}
+
+function addPoints(player, amt) {
+  if (!points[player]) points[player] = 0;
+  points[player] += amt;
+}
+
+function getLeaderboard() {
+  return Object.entries(points)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, pts], i) => `${i + 1}. ${name} - ${pts} pts`)
+    .join("\n") || "No players yet.";
+}
+
 // Health check endpoint for monitoring
 app.get('/', (req, res) => {
   res.send(`
@@ -1397,6 +1437,77 @@ function scheduleReconnect() {
 function initializeModules(bot, mcData, defaultMove) {
   addLog("[Modules] Initializing all modules...");
 
+  // =============================
+// Dating Sim System (BOT MODULE)
+// =============================
+
+function setupDatingSim(bot) {
+  bot._datingTarget = null;
+  bot._datingAnswer = null;
+
+  // ask question every 60 seconds
+  const interval = setInterval(() => {
+    if (!bot || !botState.connected) return;
+
+    const player = getRandomPlayer(bot);
+    if (!player) return;
+
+    const question = getRandomQuestion();
+    const correct = Math.random() < 0.5 ? "yes" : "no";
+
+    bot._datingTarget = player;
+    bot._datingAnswer = correct;
+
+    bot.chat(`💘 ${player}, ${question} (yes/no)`);
+  }, 60000);
+
+  activeIntervals.push(interval);
+
+  bot.on("chat", (username, message) => {
+    if (username === bot.username) return;
+
+    // =====================
+    // ANSWER SYSTEM
+    // =====================
+    if (bot._datingTarget && username === bot._datingTarget) {
+      const msg = message.toLowerCase();
+
+      if (msg === "yes" || msg === "no") {
+        if (msg === bot._datingAnswer) {
+          addPoints(username, 10);
+          bot.chat(`💖 Correct! +10 points for ${username}`);
+
+          if (points[username] >= 100 && !loveStatus[username]) {
+            loveStatus[username] = true;
+            bot.chat(`💍 ${username} is now dating the AFK Bot 💖`);
+          }
+        } else {
+          addPoints(username, 2);
+          bot.chat(`💔 Wrong, but +2 points`);
+        }
+
+        bot._datingTarget = null;
+        bot._datingAnswer = null;
+      }
+    }
+
+    // =====================
+    // COMMANDS
+    // =====================
+    if (message === "!points") {
+      bot.chat(`${username}: ${points[username] || 0} points`);
+    }
+
+    if (message === "!leaderboard") {
+      bot.chat("🏆 Top Players: " + getLeaderboard());
+    }
+  });
+
+  addLog("[DatingSim] System loaded successfully");
+}
+
+setupDatingSim(bot);
+
   // ---------- AUTO AUTH (REACTIVE) ----------
   if (config.utils["auto-auth"] && config.utils["auto-auth"].enabled) {
     const password = config.utils["auto-auth"].password;
@@ -1940,46 +2051,6 @@ function chatModule(bot) {
     }
   });
 } 
-
-bot.on('chat', (username, message) => {
-  if (username === bot.username) return;
-
-  const target = bot._datingTarget;
-
-  if (target && username === target) {
-    const answer = message.toLowerCase();
-
-    if (answer !== "yes" && answer !== "no") {
-      bot.chat(`❌ Please answer yes or no, ${username}`);
-      return;
-    }
-
-    const correct = bot._datingAnswer;
-
-    if (answer === correct) {
-      addPoints(username, 10);
-      bot.chat(`💖 Correct! +10 points for ${username}`);
-
-      if (points[username] >= 100 && !loveStatus[username]) {
-        loveStatus[username] = true;
-        bot.chat(`💍 ${username} is now dating the AFK Bot!! 💖`);
-      }
-
-    } else {
-      addPoints(username, 2);
-      bot.chat(`💔 Wrong... but +2 participation points`);
-
-    }
-
-    bot._datingTarget = null;
-    bot._datingAnswer = null;
-  }
-});
-
-  `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
-  setInterval(() => {
-  askQuestion(bot);
-}, 60000); // every 60 seconds
 
 // ============================================================
 // CONSOLE COMMANDS
