@@ -1939,7 +1939,47 @@ function chatModule(bot) {
       addLog("[Chat] Error:", e.message);
     }
   });
-}
+} 
+
+bot.on('chat', (username, message) => {
+  if (username === bot.username) return;
+
+  const target = bot._datingTarget;
+
+  if (target && username === target) {
+    const answer = message.toLowerCase();
+
+    if (answer !== "yes" && answer !== "no") {
+      bot.chat(`❌ Please answer yes or no, ${username}`);
+      return;
+    }
+
+    const correct = bot._datingAnswer;
+
+    if (answer === correct) {
+      addPoints(username, 10);
+      bot.chat(`💖 Correct! +10 points for ${username}`);
+
+      if (points[username] >= 100 && !loveStatus[username]) {
+        loveStatus[username] = true;
+        bot.chat(`💍 ${username} is now dating the AFK Bot!! 💖`);
+      }
+
+    } else {
+      addPoints(username, 2);
+      bot.chat(`💔 Wrong... but +2 participation points`);
+
+    }
+
+    bot._datingTarget = null;
+    bot._datingAnswer = null;
+  }
+});
+
+  `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
+  setInterval(() => {
+  askQuestion(bot);
+}, 60000); // every 60 seconds
 
 // ============================================================
 // CONSOLE COMMANDS
@@ -2131,46 +2171,8 @@ addLog(`Server: ${config.server.ip}:${config.server.port}`);
 addLog(`Version: ${config.server.version}`);
 addLog(
   `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
-  setInterval(() => {
-  askQuestion(bot);
-}, 60000); // every 60 seconds
   
 );
 addLog("=".repeat(50));
 
 createBot();
-
-bot.on('chat', (username, message) => {
-  if (username === bot.username) return;
-
-  const target = bot._datingTarget;
-
-  if (target && username === target) {
-    const answer = message.toLowerCase();
-
-    if (answer !== "yes" && answer !== "no") {
-      bot.chat(`❌ Please answer yes or no, ${username}`);
-      return;
-    }
-
-    const correct = bot._datingAnswer;
-
-    if (answer === correct) {
-      addPoints(username, 10);
-      bot.chat(`💖 Correct! +10 points for ${username}`);
-
-      if (points[username] >= 100 && !loveStatus[username]) {
-        loveStatus[username] = true;
-        bot.chat(`💍 ${username} is now dating the AFK Bot!! 💖`);
-      }
-
-    } else {
-      addPoints(username, 2);
-      bot.chat(`💔 Wrong... but +2 participation points`);
-
-    }
-
-    bot._datingTarget = null;
-    bot._datingAnswer = null;
-  }
-});
