@@ -1853,32 +1853,75 @@ function bedModule(bot, mcData) {
 // Chat module
 // FIX: wire up discord.events.chat flag
 function chatModule(bot) {
+  const lovePoints = {};
+  const activeQuestions = {};
+
+  const questions = [
+    "Do you like cats? (yes/no)",
+    "Would you go mining with me? (yes/no)",
+    "Do you think I'm cute? (yes/no)",
+    "Would you bring me diamonds? (yes/no)",
+    "Do you enjoy spending time with me? (yes/no)"
+  ];
+
   bot.on("chat", (username, message) => {
     if (!bot || username === bot.username) return;
 
-    try {
-      // FIX: send chat events to Discord if enabled
-      if (
-        config.discord &&
-        config.discord.enabled &&
-        config.discord.events &&
-        config.discord.events.chat
-      ) {
-        sendDiscordWebhook(`💬 **${username}**: ${message}`, 0x7289da);
+    const msg = message.toLowerCase();
+
+    if (!lovePoints[username]) {
+      lovePoints[username] = 0;
+    }
+
+    // Start dating game
+    if (msg === "date meow") {
+      const question =
+        questions[Math.floor(Math.random() * questions.length)];
+
+      activeQuestions[username] = true;
+
+      bot.chat(`${username}, ${question}`);
+      return;
+    }
+
+    // Answer handling
+    if (activeQuestions[username]) {
+
+      if (msg === "yes") {
+        lovePoints[username] += 10;
+
+        bot.chat(
+          `${username} gained 10 love points! Total: ${lovePoints[username]}`
+        );
+
+        if (lovePoints[username] >= 50) {
+          bot.chat(
+            `Meow is in love with ${username}! ❤️`
+          );
+        }
       }
 
-      if (config.chat && config.chat.respond) {
-        const lowerMsg = message.toLowerCase();
-        if (lowerMsg.includes("hello") || lowerMsg.includes("hi")) {
-          bot.chat(`Hello, ${username}!`);
-        }
-        if (message.startsWith("!tp ")) {
-          const target = message.split(" ")[1];
-          if (target) bot.chat(`/tp ${target}`);
-        }
+      if (msg === "no") {
+        bot.chat(
+          `${username} rejected me...`
+        );
       }
-    } catch (e) {
-      addLog("[Chat] Error:", e.message);
+
+      delete activeQuestions[username];
+      return;
+    }
+
+    // Check love points
+    if (msg === "!love") {
+      bot.chat(
+        `${username}, your love points: ${lovePoints[username]}`
+      );
+      return;
+    }
+
+    // Existing greetings
+    if (msg.includes("hello") || msg.includes("hi")) {
+      bot.chat(`Hello, ${username}!`);
     }
   });
 }
