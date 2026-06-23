@@ -27,6 +27,30 @@ let botState = {
 };
 
 // =============================
+// 💌 Relationship Database (PERSISTENT)
+// =============================
+
+const SAVE_FILE = "./relationships.json";
+
+let relationships = loadRelationships();
+
+function loadRelationships() {
+  try {
+    if (!fs.existsSync(SAVE_FILE)) return {};
+    return JSON.parse(fs.readFileSync(SAVE_FILE, "utf8"));
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveRelationships() {
+  fs.writeFileSync(SAVE_FILE, JSON.stringify(relationships, null, 2));
+}
+
+// structure:
+// relationships[user] = { points, level }
+
+// =============================
 // 💘 Dating Sim System (GLOBAL)
 // =============================
 
@@ -1437,26 +1461,103 @@ function scheduleReconnect() {
 // ============================================================
 function initializeModules(bot, mcData, defaultMove) {
 // =============================
-// 💘 Dating Sim MODULE
+// 💌 RELATIONSHIP SYSTEM v2
 // =============================
 
-function setupDatingSim(bot) {
-  bot._datingTarget = null;
-  bot._datingAnswer = null;
+const LEVELS = {
+  CRUSH: { min: 0, name: "💌 Crush" },
+  DATING: { min: 50, name: "💖 Dating" },
+  MARRIED: { min: 150, name: "💍 Married" }
+};
+
+// smarter weighted questions
+const questions = [
+  { q: "Do you like Minecraft?", w: 1 },
+  { q: "Would you mine diamonds with me?", w: 2 },
+  { q: "Do you trust me with your items?", w: 3 },
+  { q: "Would you protect me in PvP?", w: 3 },
+  { q: "Would you give me diamonds?", w: 4 }
+];
+
+function getRandomQuestion() {
+  const total = questions.reduce((a, b) => a + b.w, 0);
+  let r = Math.random() * total;
+
+  for (const item of questions) {
+    if (r < item.w) return item.q;
+    r -= item.w;
+  }
+  return questions[0].q;
+}
+
+function getPlayerData(name) {
+  if (!relationships[name]) {
+    relationships[name] = {
+      points: 0,
+      level: "💌 Crush"
+    };
+  }
+  return relationships[name];
+}
+
+function updateLevel(player) {
+  const data = getPlayerData(player);
+
+  if (data.points >= 150) data.level = LEVELS.MARRIED.name;
+  else if (data.points >= 50) data.level = LEVELS.DATING.name;
+  else data.level = LEVELS.CRUSH.name;
+
+  saveRelationships();
+}
+
+function addPoints(player, amt) {
+  const data = getPlayerData(player);
+  data.points += amt;
+  updateLevel(player);
+}
+
+// gifts system
+function giveGift(player, item) {
+  const data = getPlayerData(player);
+
+  if (item === "diamond") {
+    data.points += 15;
+    bot.chat(`🎁 ${player} received a diamond gift (+15 affection)`);
+  }
+
+  updateLevel(player);
+}
+
+// leaderboard
+function getLeaderboard() {
+  return Object.entries(relationships)
+    .sort((a, b) => b[1].points - a[1].points)
+    .slice(0, 5)
+    .map(([name, d], i) =>
+      `${i + 1}. ${name} - ${d.points} pts (${d.level})`
+    )
+    .join("\n") || "No relationships yet.";
+}
+
+// main system
+function setupDating(bot) {
+  bot._target = null;
+  bot._answer = null;
 
   const interval = setInterval(() => {
-    if (!bot || !botState.connected) return;
+    if (!botState.connected) return;
 
-    const player = getRandomPlayer(bot);
-    if (!player) return;
+    const players = Object.keys(bot.players || {}).filter(p => p !== bot.username);
+    if (!players.length) return;
 
-    const question = getRandomQuestion();
-    const correct = Math.random() < 0.5 ? "yes" : "no";
+    const player = players[Math.floor(Math.random() * players.length)];
+    const q = getRandomQuestion();
+    const answer = Math.random() < 0.5 ? "yes" : "no";
 
-    bot._datingTarget = player;
-    bot._datingAnswer = correct;
+    bot._target = player;
+    bot._answer = answer;
 
-    bot.chat(`💘 ${player}, ${question} (yes/no)`);
+    bot.chat(`💌 ${player}, ${q} (yes/no)`);
   }, 60000);
 
   activeIntervals.push(interval);
@@ -1464,45 +1565,69 @@ function setupDatingSim(bot) {
   bot.on("chat", (username, message) => {
     if (username === bot.username) return;
 
-    // ======================
-    // ANSWER CHECK
-    // ======================
-    if (bot._datingTarget === username) {
+    // =====================
+    // ANSWER SYSTEM
+    // =====================
+    if (bot._target === username) {
       const msg = message.toLowerCase();
 
-      if (msg !== "yes" && msg !== "no") return;
+      if (msg === "yes" || msg === "no") {
+        if (msg === bot._answer) {
+          addPoints(username, 10);
+          bot.chat(`💖 Correct! +10 affection`);
 
-      if (msg === bot._datingAnswer) {
-        addPoints(username, 10);
-        bot.chat(`💖 Correct! +10 points for ${username}`);
-
-        if (points[username] >= 100 && !loveStatus[username]) {
-          loveStatus[username] = true;
-          bot.chat(`💍 ${username} is now dating the AFK Bot 💖`);
+        } else {
+          addPoints(username, 3);
+          bot.chat(`💔 Wrong, but +3 affection`);
         }
-      } else {
-        addPoints(username, 2);
-        bot.chat(`💔 Wrong answer, but +2 points`);
-      }
 
-      bot._datingTarget = null;
-      bot._datingAnswer = null;
+        saveRelationships();
+        bot._target = null;
+        bot._answer = null;
+      }
     }
 
-    // ======================
-    // COMMANDS
-    // ======================
-    if (message === "!points") {
-      bot.chat(`${username}: ${points[username] || 0} points`);
+    // =====================
+    // GIFTS
+    // =====================
+    if (message === "!gift diamond") {
+      giveGift(username, "diamond");
+      saveRelationships();
+    }
+
+    // =====================
+    // INFO
+    // =====================
+    if (message === "!relationship") {
+      const d = getPlayerData(username);
+      bot.chat(`💌 ${username}: ${d.points} pts | ${d.level}`);
     }
 
     if (message === "!leaderboard") {
-      bot.chat("🏆 Top Players: " + getLeaderboard());
+      bot.chat("🏆 Top Relationships:\n" + getLeaderboard());
+    }
+
+    // =====================
+    // BREAKUP SYSTEM
+    // =====================
+    if (message === "!breakup") {
+      const d = getPlayerData(username);
+
+      if (d.level === LEVELS.MARRIED.name || d.level === LEVELS.DATING.name) {
+        d.points = Math.max(0, d.points - 40);
+        bot.chat(`💔 ${username} broke up... -40 affection`);
+        updateLevel(username);
+        saveRelationships();
+      } else {
+        bot.chat(`💔 You are not in a relationship yet`);
+      }
     }
   });
 
-  addLog("[DatingSim] Loaded successfully 💘");
+  addLog("[Dating v2] Relationship system loaded 💌");
 }
+
+setupDating(bot);
 
 // START MODULE
 setupDatingSim(bot);
