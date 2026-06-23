@@ -2131,6 +2131,10 @@ addLog(`Server: ${config.server.ip}:${config.server.port}`);
 addLog(`Version: ${config.server.version}`);
 addLog(
   `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
+  setInterval(() => {
+  askQuestion(bot);
+}, 60000); // every 60 seconds
+  
 );
 addLog("=".repeat(50));
 
