@@ -1850,6 +1850,64 @@ function bedModule(bot, mcData) {
   }, 10000);
 }
 
+// =========================
+// Dating Sim System Module
+// =========================
+
+const points = {}; // { playerName: number }
+const loveStatus = {}; // { playerName: true/false }
+
+// yes/no question pool
+const questions = [
+  "Do you like Minecraft?",
+  "Would you go mining with me?",
+  "Do you trust me?",
+  "Would you share diamonds with me?",
+  "Do you want to explore together?"
+];
+
+// pick random player in server
+function getRandomPlayer(bot) {
+  const players = Object.keys(bot.players);
+  const filtered = players.filter(p => p !== bot.username);
+
+  if (filtered.length === 0) return null;
+  return filtered[Math.floor(Math.random() * filtered.length)];
+}
+
+// random yes/no question
+function getRandomQuestion() {
+  return questions[Math.floor(Math.random() * questions.length)];
+}
+
+// ask question loop
+function askQuestion(bot) {
+  const player = getRandomPlayer(bot);
+  if (!player) return;
+
+  const question = getRandomQuestion();
+
+  bot.chat(`💘 Hey ${player}, ${question} (yes/no)`);
+
+  bot._datingTarget = player;
+  bot._datingAnswer = Math.random() < 0.5 ? "yes" : "no"; // correct answer system
+}
+
+// add points
+function addPoints(player, amount) {
+  if (!points[player]) points[player] = 0;
+  points[player] += amount;
+}
+
+// leaderboard
+function getLeaderboard() {
+  return Object.entries(points)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, pts], i) => `${i + 1}. ${name} - ${pts} pts`)
+    .join("\n");
+}
+
 // Chat module
 // FIX: wire up discord.events.chat flag
 function chatModule(bot) {
@@ -2077,3 +2135,38 @@ addLog(
 addLog("=".repeat(50));
 
 createBot();
+
+bot.on('chat', (username, message) => {
+  if (username === bot.username) return;
+
+  const target = bot._datingTarget;
+
+  if (target && username === target) {
+    const answer = message.toLowerCase();
+
+    if (answer !== "yes" && answer !== "no") {
+      bot.chat(`❌ Please answer yes or no, ${username}`);
+      return;
+    }
+
+    const correct = bot._datingAnswer;
+
+    if (answer === correct) {
+      addPoints(username, 10);
+      bot.chat(`💖 Correct! +10 points for ${username}`);
+
+      if (points[username] >= 100 && !loveStatus[username]) {
+        loveStatus[username] = true;
+        bot.chat(`💍 ${username} is now dating the AFK Bot!! 💖`);
+      }
+
+    } else {
+      addPoints(username, 2);
+      bot.chat(`💔 Wrong... but +2 participation points`);
+
+    }
+
+    bot._datingTarget = null;
+    bot._datingAnswer = null;
+  }
+});
