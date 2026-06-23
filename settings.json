@@ -1,13 +1,13 @@
 {
   "name": "AFK Bot",
   "bot-account": {
-    "username": "Meow",
+    "username": "SoloCloudHosting",
     "password": "",
     "type": "offline"
   },
   "server": {
-    "ip": "GODADMC.aternos.me",
-    "port": 23219,
+    "ip": "solocloud.host",
+    "port": 25565,
     "version": "1.20.1",
     "try-creative": false
   },
@@ -32,9 +32,8 @@
       "repeat-delay": 120,
       "messages": [
         "I'm a regular player",
-        "Do u like pay gorn?",
-        "I'm gay",
-        "I'm not gona fuck u Mila"
+        "Subscribe to SoloPlayz!",
+        "Want Cheap Premium MC Server? https://discord.gg/VRMUnDkf95"
       ]
     },
     "chat-log": true,

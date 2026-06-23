@@ -1,7 +1,5 @@
 "use strict";
 
-let bot = null;
-let botRunning = false;
 const { addLog, getLogs } = require("./logger");
 const mineflayer = require("mineflayer");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
@@ -975,45 +973,13 @@ app.get("/logs", (req, res) => {
   `);
 });
 
+let botRunning = true;
+
 app.post("/start", (req, res) => {
-  if (botRunning) {
-    return res.json({ success: false, msg: "Already running" });
-  }
+  if (botRunning) return res.json({ success: false, msg: "Already running" });
 
   botRunning = true;
-
-  bot = mineflayer.createBot({
-    host: process.env.HOST,
-    port: process.env.PORT,
-    username: process.env.USERNAME
-  });
-
-  bot.once("spawn", () => {
-    addLog("[Bot] Spawned");
-
-    startLoveModule(bot);
-  });
-
-  bot.on("end", () => {
-    addLog("[Bot] Disconnected");
-
-    // auto-restart ONLY if botRunning is still true
-    if (botRunning) {
-      setTimeout(() => {
-        addLog("[Bot] Auto restarting...");
-        app.post("/start", { }); // NOT ideal but keeps logic simple
-      }, 5000);
-    }
-  });
-
-  bot.on("error", (err) => {
-    addLog("[Bot Error] " + err.message);
-  });
-
-  addLog("[Control] Bot started");
-  res.json({ success: true });
-});
-
+  createBot();
   addLog("[Control] Bot started");
 
   res.json({ success: true });
@@ -1884,77 +1850,35 @@ function bedModule(bot, mcData) {
   }, 10000);
 }
 
-// Chat module\Dating sim
+// Chat module
 // FIX: wire up discord.events.chat flag
-// =======================
-// LOVE / DATING MODULE
-// =======================
-
-const lovePoints = {};
-const activeQuestions = {};
-
-function startLoveModule(bot) {
-
-  const questions = [
-    { question: "Would you save me from lava? (yes/no)", answer: "yes", points: 10 },
-    { question: "Would you steal from me? (yes/no)", answer: "no", points: 15 },
-    { question: "Would you leave me alone forever? (yes/no)", answer: "no", points: 20 },
-    { question: "Would you bring me diamonds? (yes/no)", answer: "yes", points: 15 },
-    { question: "Do you hate cats? (yes/no)", answer: "no", points: 25 }
-  ];
-
-  function getRank(points) {
-    if (points >= 100) return "Soulmate";
-    if (points >= 75) return "Dating";
-    if (points >= 50) return "Crush";
-    if (points >= 25) return "Friend";
-    return "Stranger";
-  }
-
-  setInterval(() => {
-    const players = Object.keys(bot.players || {}).filter(p => p !== bot.username);
-    if (!players.length) return;
-
-    const target = players[Math.floor(Math.random() * players.length)];
-    const q = questions[Math.floor(Math.random() * questions.length)];
-
-    activeQuestions[target] = q;
-
-    bot.chat(`${target}, question: ${q.question}`);
-  }, 300000);
-
+function chatModule(bot) {
   bot.on("chat", (username, message) => {
-    if (username === bot.username) return;
+    if (!bot || username === bot.username) return;
 
-    const msg = message.toLowerCase();
+    try {
+      // FIX: send chat events to Discord if enabled
+      if (
+        config.discord &&
+        config.discord.enabled &&
+        config.discord.events &&
+        config.discord.events.chat
+      ) {
+        sendDiscordWebhook(`💬 **${username}**: ${message}`, 0x7289da);
+      }
 
-    if (!lovePoints[username]) lovePoints[username] = 0;
-
-    const q = activeQuestions[username];
-    if (!q) return;
-
-    if (msg === q.answer) {
-      lovePoints[username] += q.points;
-
-      bot.chat(
-        `${username} correct. +${q.points} love points. Total: ${lovePoints[username]}`
-      );
-    } 
-    else if (msg === "yes" || msg === "no") {
-      lovePoints[username] -= 5;
-      if (lovePoints[username] < 0) lovePoints[username] = 0;
-
-      bot.chat(
-        `${username} wrong. -5 love points. Total: ${lovePoints[username]}`
-      );
-    }
-
-    delete activeQuestions[username];
-
-    const rank = getRank(lovePoints[username]);
-
-    if (lovePoints[username] >= 100) {
-      bot.chat(`${username} reached Soulmate status! Rank: ${rank}`);
+      if (config.chat && config.chat.respond) {
+        const lowerMsg = message.toLowerCase();
+        if (lowerMsg.includes("hello") || lowerMsg.includes("hi")) {
+          bot.chat(`Hello, ${username}!`);
+        }
+        if (message.startsWith("!tp ")) {
+          const target = message.split(" ")[1];
+          if (target) bot.chat(`/tp ${target}`);
+        }
+      }
+    } catch (e) {
+      addLog("[Chat] Error:", e.message);
     }
   });
 }
