@@ -26,6 +26,47 @@ let botState = {
   wasThrottled: false,
 };
 
+// =============================
+// 💘 Dating Sim System (GLOBAL)
+// =============================
+
+const points = {};
+const loveStatus = {};
+
+// questions pool
+const questions = [
+  "Do you like Minecraft?",
+  "Would you mine with me?",
+  "Do you trust me?",
+  "Would you share diamonds with me?",
+  "Do you want to explore together?",
+  "Would you protect me in PvP?"
+];
+
+function getRandomPlayer(bot) {
+  const players = Object.keys(bot.players || {});
+  const list = players.filter(p => p !== bot.username);
+  if (!list.length) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function getRandomQuestion() {
+  return questions[Math.floor(Math.random() * questions.length)];
+}
+
+function addPoints(player, amount) {
+  if (!points[player]) points[player] = 0;
+  points[player] += amount;
+}
+
+function getLeaderboard() {
+  return Object.entries(points)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, pts], i) => `${i + 1}. ${name} - ${pts} pts`)
+    .join("\n") || "No players yet.";
+}
+
 // Health check endpoint for monitoring
 app.get('/', (req, res) => {
   res.send(`
@@ -1395,6 +1436,76 @@ function scheduleReconnect() {
 // MODULE INITIALIZATION
 // ============================================================
 function initializeModules(bot, mcData, defaultMove) {
+// =============================
+// 💘 Dating Sim MODULE
+// =============================
+
+function setupDatingSim(bot) {
+  bot._datingTarget = null;
+  bot._datingAnswer = null;
+
+  const interval = setInterval(() => {
+    if (!bot || !botState.connected) return;
+
+    const player = getRandomPlayer(bot);
+    if (!player) return;
+
+    const question = getRandomQuestion();
+    const correct = Math.random() < 0.5 ? "yes" : "no";
+
+    bot._datingTarget = player;
+    bot._datingAnswer = correct;
+
+    bot.chat(`💘 ${player}, ${question} (yes/no)`);
+  }, 60000);
+
+  activeIntervals.push(interval);
+
+  bot.on("chat", (username, message) => {
+    if (username === bot.username) return;
+
+    // ======================
+    // ANSWER CHECK
+    // ======================
+    if (bot._datingTarget === username) {
+      const msg = message.toLowerCase();
+
+      if (msg !== "yes" && msg !== "no") return;
+
+      if (msg === bot._datingAnswer) {
+        addPoints(username, 10);
+        bot.chat(`💖 Correct! +10 points for ${username}`);
+
+        if (points[username] >= 100 && !loveStatus[username]) {
+          loveStatus[username] = true;
+          bot.chat(`💍 ${username} is now dating the AFK Bot 💖`);
+        }
+      } else {
+        addPoints(username, 2);
+        bot.chat(`💔 Wrong answer, but +2 points`);
+      }
+
+      bot._datingTarget = null;
+      bot._datingAnswer = null;
+    }
+
+    // ======================
+    // COMMANDS
+    // ======================
+    if (message === "!points") {
+      bot.chat(`${username}: ${points[username] || 0} points`);
+    }
+
+    if (message === "!leaderboard") {
+      bot.chat("🏆 Top Players: " + getLeaderboard());
+    }
+  });
+
+  addLog("[DatingSim] Loaded successfully 💘");
+}
+
+// START MODULE
+setupDatingSim(bot);
   addLog("[Modules] Initializing all modules...");
 
   // ---------- AUTO AUTH (REACTIVE) ----------
