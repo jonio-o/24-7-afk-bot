@@ -1850,81 +1850,111 @@ function bedModule(bot, mcData) {
   }, 10000);
 }
 
-// Chat module
+// Chat module\Dating sim
 // FIX: wire up discord.events.chat flag
-function chatModule(bot) {
-  const lovePoints = {};
-  const activeQuestions = {};
+const lovePoints = {};
+const activeQuestions = {};
 
-  const questions = [
-    "Do you like cats? (yes/no)",
-    "Would you go mining with me? (yes/no)",
-    "Do you think I'm cute? (yes/no)",
-    "Would you bring me diamonds? (yes/no)",
-    "Do you enjoy spending time with me? (yes/no)"
-  ];
+const questions = [
+  {
+    question: "Would you save me from lava? (yes/no)",
+    answer: "yes",
+    points: 10
+  },
+  {
+    question: "Would you steal from me? (yes/no)",
+    answer: "no",
+    points: 15
+  },
+  {
+    question: "Would you leave me alone forever? (yes/no)",
+    answer: "no",
+    points: 20
+  },
+  {
+    question: "Would you bring me diamonds? (yes/no)",
+    answer: "yes",
+    points: 15
+  },
+  {
+    question: "Do you hate cats? (yes/no)",
+    answer: "no",
+    points: 25
+  }
+];
 
-  bot.on("chat", (username, message) => {
-    if (!bot || username === bot.username) return;
+setInterval(() => {
 
-    const msg = message.toLowerCase();
+  const players = Object.keys(bot.players)
+    .filter(name => name !== bot.username);
 
-    if (!lovePoints[username]) {
+  if (players.length === 0) return;
+
+  const target =
+    players[Math.floor(Math.random() * players.length)];
+
+  const q =
+    questions[Math.floor(Math.random() * questions.length)];
+
+  activeQuestions[target] = q;
+
+  bot.chat(
+    `${target}, question: ${q.question}`
+  );
+
+}, 300000); // every 5 minutes
+
+
+bot.on("chat", (username, message) => {
+
+  if (username === bot.username) return;
+
+  const msg = message.toLowerCase();
+
+  if (!lovePoints[username])
+    lovePoints[username] = 0;
+
+  if (!activeQuestions[username])
+    return;
+
+  const q = activeQuestions[username];
+
+  if (msg === q.answer) {
+
+    lovePoints[username] += q.points;
+
+    bot.chat(
+      `${username} answered correctly! +${q.points} love points. Total: ${lovePoints[username]}`
+    );
+
+  } else if (msg === "yes" || msg === "no") {
+
+    lovePoints[username] -= 5;
+
+    if (lovePoints[username] < 0)
       lovePoints[username] = 0;
-    }
 
-    // Start dating game
-    if (msg === "date meow") {
-      const question =
-        questions[Math.floor(Math.random() * questions.length)];
+    bot.chat(
+      `${username} answered wrong! -5 love points. Total: ${lovePoints[username]}`
+    );
+  }
 
-      activeQuestions[username] = true;
+  delete activeQuestions[username];
 
-      bot.chat(`${username}, ${question}`);
-      return;
-    }
+  if (lovePoints[username] >= 100) {
 
-    // Answer handling
-    if (activeQuestions[username]) {
+    bot.chat(
+      `❤️ Meow has fallen in love with ${username}! ❤️`
+    );
+  }
+});
 
-      if (msg === "yes") {
-        lovePoints[username] += 10;
 
-        bot.chat(
-          `${username} gained 10 love points! Total: ${lovePoints[username]}`
-        );
-
-        if (lovePoints[username] >= 50) {
-          bot.chat(
-            `Meow is in love with ${username}! ❤️`
-          );
-        }
-      }
-
-      if (msg === "no") {
-        bot.chat(
-          `${username} rejected me...`
-        );
-      }
-
-      delete activeQuestions[username];
-      return;
-    }
-
-    // Check love points
-    if (msg === "!love") {
-      bot.chat(
-        `${username}, your love points: ${lovePoints[username]}`
-      );
-      return;
-    }
-
-    // Existing greetings
-    if (msg.includes("hello") || msg.includes("hi")) {
-      bot.chat(`Hello, ${username}!`);
-    }
-  });
-}
+if (points >= 100) Rank = "Soulmate";
+else if (points >= 75) Rank = "Dating";
+else if (points >= 50) Rank = "Crush";
+else if (points >= 25) Rank = "Friend";
+else Rank = "Stranger";
 
 // ============================================================
 // CONSOLE COMMANDS
