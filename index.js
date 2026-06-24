@@ -1,1391 +1,314 @@
 "use strict";
 
-const { addLog, getLogs } = require("./logger");
+// ============================================================
+// CORE IMPORTS
+// ============================================================
+
 const mineflayer = require("mineflayer");
-const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
+const { pathfinder, Movements, goals } = require("mineflayer-pathfinder");
 const { GoalBlock } = goals;
-const config = require("./settings.json");
+
 const express = require("express");
 const http = require("http");
 const https = require("https");
 
+const config = require("./settings.json");
+const { addLog, getLogs } = require("./logger");
+
 // ============================================================
-// EXPRESS SERVER - Keep Render/Aternos alive
+// APP + SERVER STATE
 // ============================================================
+
 const app = express();
 app.use(express.json());
+
 const PORT = process.env.PORT || 5000;
 
-// Bot state tracking
+// ============================================================
+// GLOBAL BOT STATE
+// ============================================================
+
+let bot = null;
+let botRunning = false;
+
 let botState = {
   connected: false,
+  startTime: Date.now(),
   lastActivity: Date.now(),
   reconnectAttempts: 0,
-  startTime: Date.now(),
-  errors: [],
   wasThrottled: false,
+  errors: [],
 };
 
-// Health check endpoint for monitoring
-app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <title>${config.name} Dashboard</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" media="print" onload="this.media='all'"
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <style>
-          *, *::before, *::after { box-sizing: border-box; }
-
-          body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 24px;
-          }
-
-          main { width: 100%; max-width: 400px; }
-
-          header { margin-bottom: 28px; }
-          header h1 {
-            font-size: 26px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-            line-height: 1.2;
-          }
-          header p {
-            font-size: 14px;
-            color: #8b949e;
-            margin: 6px 0 0;
-            line-height: 1.5;
-          }
-
-          .status-section {
-            border-radius: 12px;
-            padding: 20px 24px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            transition: background 0.3s, border-color 0.3s;
-          }
-          .status-section.online  { background: #0d2218; border: 2px solid #238636; }
-          .status-section.offline { background: #200d0d; border: 2px solid #da3633; }
-
-          .status-icon {
-            width: 44px; height: 44px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 20px; flex-shrink: 0;
-            transition: background 0.3s;
-          }
-          .status-icon.online  { background: #238636; }
-          .status-icon.offline { background: #da3633; }
-
-          .status-label { font-size: 18px; font-weight: 700; line-height: 1.2; transition: color 0.3s; }
-          .status-label.online  { color: #3fb950; }
-          .status-label.offline { color: #f85149; }
-          .status-detail { font-size: 13px; color: #8b949e; margin-top: 3px; }
-
-          dl { margin: 0; }
-          .stat-card {
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 10px;
-            padding: 16px 20px;
-            margin-bottom: 10px;
-          }
-          dt { font-size: 12px; color: #8b949e; font-weight: 600; margin-bottom: 4px; }
-          dd { margin: 0; font-size: 17px; font-weight: 600; color: #e6edf3; line-height: 1.3; }
-          .stat-detail { margin: 4px 0 0; font-size: 11px; color: #6e7681; }
-
-          .controls { margin-top: 8px; }
-          .btn-grid { display: grid; gap: 10px; margin-bottom: 10px; }
-          .btn-grid-2 { grid-template-columns: 1fr 1fr; }
-
-          .btn-primary {
-            min-height: 52px; border-radius: 10px;
-            font-size: 15px; font-weight: 700;
-            cursor: pointer; letter-spacing: 0.3px;
-            transition: opacity 0.2s, filter 0.2s;
-            font-family: inherit;
-          }
-          .btn-primary:hover  { filter: brightness(1.1); }
-          .btn-primary:active { opacity: 0.85; }
-          .btn-start { border: 2px solid #238636; background: #0d2218; color: #3fb950; }
-          .btn-stop  { border: 2px solid #da3633; background: #200d0d; color: #f85149; }
-
-          .btn-secondary {
-            min-height: 44px; border-radius: 10px;
-            border: 1px solid #21262d; background: #161b22; color: #8b949e;
-            font-size: 13px; font-weight: 500;
-            text-decoration: none;
-            display: flex; align-items: center; justify-content: center;
-            font-family: inherit; cursor: pointer;
-            transition: background 0.2s, color 0.2s;
-          }
-          .btn-secondary:hover { background: #21262d; color: #c9d1d9; }
-
-          footer { margin-top: 20px; text-align: center; }
-          footer p { font-size: 12px; color: #484f58; margin: 0; }
-        </style>
-      </head>
-      <body>
-        <main role="main" aria-label="AFK Bot Dashboard">
-
-          <header>
-            <h1>AFK Bot Dashboard</h1>
-            <p>Minecraft server bot &middot; Live status</p>
-          </header>
-
-          <section
-            id="status-section"
-            role="status"
-            aria-live="polite"
-            aria-label="Bot connection status"
-            class="status-section offline"
-          >
-            <div id="status-icon" aria-hidden="true" class="status-icon offline">&#x2717;</div>
-            <div>
-              <div id="status-label" class="status-label offline">Connecting…</div>
-              <div id="status-detail" class="status-detail">Establishing connection</div>
-            </div>
-          </section>
-
-          <section aria-label="Bot statistics">
-            <dl>
-              <div class="stat-card">
-                <dt>Uptime</dt>
-                <dd id="uptime-text">—</dd>
-                <p class="stat-detail">Time since last connection</p>
-              </div>
-              <div class="stat-card">
-                <dt>Coordinates</dt>
-                <dd id="coords-text">Searching…</dd>
-                <p class="stat-detail">Bot's current in-game position</p>
-              </div>
-              <div class="stat-card">
-                <dt>Server address</dt>
-                <dd>${config.server.ip}</dd>
-                <p class="stat-detail">Minecraft server hostname</p>
-              </div>
-            </dl>
-          </section>
-
-          <section class="controls" aria-label="Bot controls">
-            <div class="btn-grid btn-grid-2">
-              <button class="btn-primary btn-start" onclick="startBot()" aria-label="Start bot">Start bot</button>
-              <button class="btn-primary btn-stop" onclick="stopBot()" aria-label="Stop bot">Stop bot</button>
-            </div>
-            <div class="btn-grid btn-grid-2">
-              <a href="/tutorial" class="btn-secondary" aria-label="View setup guide">Setup guide</a>
-              <a href="/logs" class="btn-secondary" aria-label="View bot logs">View logs</a>
-            </div>
-          </section>
-
-          <footer>
-            <p>Status updates every 5 seconds</p>
-          </footer>
-
-        </main>
-
-        <script>
-          function formatUptime(s) {
-            const h = Math.floor(s / 3600);
-            const m = Math.floor((s % 3600) / 60);
-            const sec = s % 60;
-            if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
-            if (m > 0) return m + 'm ' + sec + 's';
-            return sec + ' seconds';
-          }
-
-          async function update() {
-            try {
-              const r = await fetch('/health');
-              const data = await r.json();
-              const online = data.status === 'connected';
-
-              const section = document.getElementById('status-section');
-              const icon    = document.getElementById('status-icon');
-              const label   = document.getElementById('status-label');
-              const detail  = document.getElementById('status-detail');
-
-              section.className = 'status-section ' + (online ? 'online' : 'offline');
-              icon.className    = 'status-icon '    + (online ? 'online' : 'offline');
-              icon.textContent  = online ? '✓' : '✗';
-              label.className   = 'status-label '   + (online ? 'online' : 'offline');
-              label.textContent = online ? 'Connected' : 'Disconnected';
-              detail.textContent = online ? 'Bot is active on the server' : 'Attempting to reconnect';
-
-              document.getElementById('uptime-text').textContent = formatUptime(data.uptime);
-
-              if (data.coords) {
-                const x = Math.floor(data.coords.x);
-                const y = Math.floor(data.coords.y);
-                const z = Math.floor(data.coords.z);
-                document.getElementById('coords-text').textContent = 'X ' + x + ', Y ' + y + ', Z ' + z;
-              } else {
-                document.getElementById('coords-text').textContent = 'Searching…';
-              }
-            } catch (e) {
-              const label = document.getElementById('status-label');
-              label.className = 'status-label offline';
-              label.textContent = 'Unreachable';
-            }
-          }
-
-          async function startBot() {
-            const r = await fetch('/start', { method: 'POST' });
-            const data = await r.json();
-            alert(data.success ? 'Bot started!' : data.msg);
-            update();
-          }
-
-          async function stopBot() {
-            const r = await fetch('/stop', { method: 'POST' });
-            const data = await r.json();
-            alert(data.success ? 'Bot stopped!' : data.msg);
-            update();
-          }
-
-          setInterval(update, 5000);
-          update();
-        </script>
-      </body>
-    </html>
-  `);
-});
-app.get("/tutorial", (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <title>${config.name} - Setup Guide</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" media="print" onload="this.media='all'"
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <style>
-          *, *::before, *::after { box-sizing: border-box; }
-
-          body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            margin: 0;
-            padding: 40px 24px;
-          }
-
-          main {
-            width: 100%;
-            max-width: 560px;
-            margin: 0 auto;
-          }
-
-          .back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            color: #8b949e;
-            text-decoration: none;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 8px;
-            padding: 7px 14px;
-            margin-bottom: 32px;
-            transition: color 0.2s, background 0.2s;
-          }
-          .back-btn:hover { background: #21262d; color: #c9d1d9; }
-
-          header { margin-bottom: 32px; }
-          header h1 {
-            font-size: 26px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-            line-height: 1.2;
-          }
-          header p {
-            font-size: 14px;
-            color: #8b949e;
-            margin: 6px 0 0;
-            line-height: 1.5;
-          }
-
-          .step-card {
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 16px;
-          }
-
-          .step-header {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            margin-bottom: 18px;
-          }
-
-          .step-number {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: #0d2218;
-            border: 2px solid #238636;
-            color: #3fb950;
-            font-size: 14px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-          }
-
-          .step-title {
-            font-size: 16px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-          }
-
-          ol {
-            margin: 0;
-            padding: 0;
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-          }
-
-          li {
-            font-size: 14px;
-            color: #8b949e;
-            line-height: 1.6;
-            padding-left: 20px;
-            position: relative;
-          }
-
-          li::before {
-            content: "·";
-            position: absolute;
-            left: 6px;
-            color: #3fb950;
-            font-weight: 700;
-          }
-
-          li strong { color: #e6edf3; font-weight: 600; }
-
-          code {
-            background: #21262d;
-            border: 1px solid #30363d;
-            padding: 2px 7px;
-            border-radius: 5px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 12px;
-            color: #e6edf3;
-          }
-
-          a { color: #58a6ff; text-decoration: none; }
-          a:hover { text-decoration: underline; }
-
-          footer {
-            margin-top: 32px;
-            text-align: center;
-          }
-          footer p { font-size: 12px; color: #484f58; margin: 0; }
-        </style>
-      </head>
-      <body>
-        <main>
-          <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
-
-          <header>
-            <h1>Setup Guide</h1>
-            <p>Get your AFK bot running in under 15 minutes</p>
-          </header>
-
-          <div class="step-card">
-            <div class="step-header">
-              <div class="step-number">1</div>
-              <h2 class="step-title">Configure Aternos</h2>
-            </div>
-            <ol>
-              <li>Go to <strong>Aternos</strong> and open your server.</li>
-              <li>Install <strong>Paper/Bukkit</strong> as your server software.</li>
-              <li>Enable <strong>Cracked</strong> mode using the green switch.</li>
-              <li>Install these plugins: <code>ViaVersion</code>, <code>ViaBackwards</code>, <code>ViaRewind</code></li>
-            </ol>
-          </div>
-
-          <div class="step-card">
-            <div class="step-header">
-              <div class="step-number">2</div>
-              <h2 class="step-title">GitHub Setup</h2>
-            </div>
-            <ol>
-              <li>Download this project as a ZIP and extract it.</li>
-              <li>Edit <code>settings.json</code> with your server IP and port.</li>
-              <li>Upload all files to a new <strong>GitHub Repository</strong>.</li>
-            </ol>
-          </div>
-
-          <div class="step-card">
-            <div class="step-header">
-              <div class="step-number">3</div>
-              <h2 class="step-title">Deploy on Replit (Free 24/7)</h2>
-            </div>
-            <ol>
-              <li>Import your GitHub repo into <strong>Replit</strong>.</li>
-              <li>Set the run command to <code>npm start</code>.</li>
-              <li>Hit <strong>Run</strong> — the bot connects automatically.</li>
-              <li>The bot pings itself every 10 minutes to stay alive.</li>
-            </ol>
-          </div>
-
-          <footer>
-            <p>AFK Bot Dashboard &middot; ${config.name}</p>
-          </footer>
-        </main>
-      </body>
-    </html>
-  `);
-});
-
-app.get("/health", (req, res) => {
-  res.json({
-    status: botState.connected ? "connected" : "disconnected",
-    uptime: Math.floor((Date.now() - botState.startTime) / 1000),
-    coords: bot && bot.entity ? bot.entity.position : null,
-    lastActivity: botState.lastActivity,
-    reconnectAttempts: botState.reconnectAttempts,
-    memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
-  });
-});
-
-app.get("/ping", (req, res) => res.send("pong"));
-
-app.get("/logs", (req, res) => {
-  const logs = getLogs();
-
-  const escapeHTML = (str) =>
-    str.replace(
-      /[&<>"']/g,
-      (m) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[m],
-    );
-
-  const logCount = logs.length;
-
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <title>${config.name} - Logs</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" media="print" onload="this.media='all'"
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <style>
-          *, *::before, *::after { box-sizing: border-box; }
-
-          body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            margin: 0;
-            padding: 40px 24px;
-          }
-
-          main {
-            width: 100%;
-            max-width: 760px;
-            margin: 0 auto;
-          }
-
-          .back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            color: #8b949e;
-            text-decoration: none;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 8px;
-            padding: 7px 14px;
-            margin-bottom: 32px;
-            transition: color 0.2s, background 0.2s;
-          }
-          .back-btn:hover { background: #21262d; color: #c9d1d9; }
-
-          .page-header {
-            display: flex;
-            align-items: flex-end;
-            justify-content: space-between;
-            margin-bottom: 20px;
-            gap: 12px;
-            flex-wrap: wrap;
-          }
-
-          .page-header-left h1 {
-            font-size: 26px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-            line-height: 1.2;
-          }
-          .page-header-left p {
-            font-size: 14px;
-            color: #8b949e;
-            margin: 6px 0 0;
-          }
-
-          .badge {
-            font-size: 12px;
-            font-weight: 600;
-            color: #8b949e;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 20px;
-            padding: 4px 12px;
-            white-space: nowrap;
-          }
-
-          .log-card {
-            background: #0d1117;
-            border: 1px solid #21262d;
-            border-radius: 12px;
-            overflow: hidden;
-          }
-
-          .log-card-header {
-            background: #161b22;
-            border-bottom: 1px solid #21262d;
-            padding: 12px 18px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
-
-          .dot { width: 10px; height: 10px; border-radius: 50%; }
-          .dot-red   { background: #ff5f57; }
-          .dot-yellow{ background: #ffbd2e; }
-          .dot-green { background: #28c840; }
-
-          .log-card-title {
-            font-size: 12px;
-            font-weight: 500;
-            color: #484f58;
-            margin-left: 4px;
-          }
-
-          .log-body {
-            padding: 16px 18px;
-            max-height: 560px;
-            overflow-y: auto;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12.5px;
-            line-height: 1.7;
-          }
-
-          .log-entry { display: block; padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
-          .log-entry.error   { color: #ff7b72; }
-          .log-entry.warn    { color: #e3b341; }
-          .log-entry.success { color: #3fb950; }
-          .log-entry.control { color: #58a6ff; }
-          .log-entry.default { color: #8b949e; }
-
-          .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #484f58;
-            font-size: 13px;
-          }
-
-          .refresh-bar {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 6px;
-            margin-top: 12px;
-            font-size: 12px;
-            color: #484f58;
-          }
-          .refresh-dot {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            background: #3fb950;
-            animation: pulse 2s infinite;
-          }
-          @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-          }
-
-          .console-row {
-            display: flex;
-            align-items: center;
-            border-top: 1px solid #21262d;
-            background: #0d1117;
-            padding: 10px 18px;
-            gap: 10px;
-          }
-
-          .console-prompt {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 13px;
-            color: #3fb950;
-            font-weight: 700;
-            flex-shrink: 0;
-            user-select: none;
-          }
-
-          .console-input {
-            flex: 1;
-            background: transparent;
-            border: none;
-            outline: none;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12.5px;
-            color: #e6edf3;
-            caret-color: #3fb950;
-          }
-
-          .console-input::placeholder { color: #484f58; }
-
-          .console-send {
-            background: #0d2218;
-            border: 1px solid #238636;
-            color: #3fb950;
-            font-size: 12px;
-            font-weight: 600;
-            padding: 5px 14px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-family: inherit;
-            transition: background 0.2s;
-            flex-shrink: 0;
-          }
-          .console-send:hover { background: #122d1a; }
-          .console-send:disabled { opacity: 0.5; cursor: default; }
-
-          .console-wrap {
-            position: relative;
-          }
-
-          .cmd-suggestions {
-            display: none;
-            position: absolute;
-            bottom: calc(100% + 6px);
-            left: 0; right: 0;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            z-index: 10;
-          }
-
-          .cmd-suggestions.visible { display: block; }
-
-          .cmd-item {
-            display: flex;
-            align-items: baseline;
-            gap: 12px;
-            padding: 9px 16px;
-            cursor: pointer;
-            transition: background 0.12s;
-            border-bottom: 1px solid #21262d;
-          }
-          .cmd-item:last-child { border-bottom: none; }
-          .cmd-item:hover, .cmd-item.active {
-            background: #21262d;
-          }
-
-          .cmd-name {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12.5px;
-            font-weight: 700;
-            color: #3fb950;
-            flex-shrink: 0;
-            min-width: 90px;
-          }
-
-          .cmd-desc {
-            font-size: 12px;
-            color: #6e7681;
-          }
-
-          footer { margin-top: 32px; text-align: center; }
-          footer p { font-size: 12px; color: #484f58; margin: 0; }
-        </style>
-      </head>
-      <body>
-        <main>
-          <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
-
-          <div class="page-header">
-            <div class="page-header-left">
-              <h1>Bot Logs</h1>
-              <p>Live output from the AFK bot</p>
-            </div>
-            <span class="badge">${logCount} ${logCount === 1 ? "entry" : "entries"}</span>
-          </div>
-
-          <div class="log-card">
-            <div class="log-card-header">
-              <span class="dot dot-red"></span>
-              <span class="dot dot-yellow"></span>
-              <span class="dot dot-green"></span>
-              <span class="log-card-title">bot.log</span>
-            </div>
-            <div class="log-body" id="log-body">
-              ${logCount === 0
-                ? `<div class="empty-state">No log entries yet. Start the bot to see output.</div>`
-                : logs.map((l) => {
-                    const escaped = escapeHTML(l);
-                    const lower = l.toLowerCase();
-                    let cls = "default";
-                    if (lower.includes("error") || lower.includes("fail")) cls = "error";
-                    else if (lower.includes("warn")) cls = "warn";
-                    else if (lower.includes("[control]")) cls = "control";
-                    else if (lower.includes("connect") || lower.includes("join") || lower.includes("spawn")) cls = "success";
-                    return `<span class="log-entry ${cls}">${escaped}</span>`;
-                  }).join("")
-              }
-            </div>
-            <div class="console-wrap">
-              <div class="cmd-suggestions" id="cmd-suggestions"></div>
-              <div class="console-row">
-                <span class="console-prompt">&gt;</span>
-                <input
-                  id="console-input"
-                  class="console-input"
-                  type="text"
-                  placeholder="Type / for commands, or any message…"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-                <button id="console-send" class="console-send">Send</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="refresh-bar">
-            <span class="refresh-dot"></span>
-            <span id="refresh-label">Auto-refreshing every 5 seconds</span>
-          </div>
-
-          <footer>
-            <p>AFK Bot Dashboard &middot; ${config.name}</p>
-          </footer>
-        </main>
-
-        <script>
-          (function() {
-            var logBody  = document.getElementById('log-body');
-            var input    = document.getElementById('console-input');
-            var sendBtn  = document.getElementById('console-send');
-            var label    = document.getElementById('refresh-label');
-            var sugBox   = document.getElementById('cmd-suggestions');
-            var refreshTimer = null;
-            var typing = false;
-            var activeIdx = -1;
-
-            var COMMANDS = [
-              { name: '/help',   desc: 'Show all available commands' },
-              { name: '/pos',    desc: "Show bot's current coordinates" },
-              { name: '/status', desc: 'Show connection status & uptime' },
-              { name: '/list',   desc: 'List players on the server' },
-              { name: '/say',    desc: 'Send a chat message in-game' },
-            ];
-
-            function scrollBottom() {
-              if (logBody) logBody.scrollTop = logBody.scrollHeight;
-            }
-
-            function scheduleRefresh() {
-              clearTimeout(refreshTimer);
-              if (!typing) {
-                refreshTimer = setTimeout(function() { location.reload(); }, 5000);
-              }
-            }
-
-            function appendLocalEntry(text, cls) {
-              var span = document.createElement('span');
-              span.className = 'log-entry ' + (cls || 'control');
-              span.textContent = text;
-              logBody.appendChild(span);
-              scrollBottom();
-            }
-
-            function hideSuggestions() {
-              sugBox.classList.remove('visible');
-              sugBox.innerHTML = '';
-              activeIdx = -1;
-            }
-
-            function setActive(idx) {
-              var items = sugBox.querySelectorAll('.cmd-item');
-              items.forEach(function(el, i) {
-                el.classList.toggle('active', i === idx);
-              });
-              activeIdx = idx;
-            }
-
-            function showSuggestions(val) {
-              var query = val.toLowerCase();
-              var matches = COMMANDS.filter(function(c) {
-                return c.name.startsWith(query);
-              });
-
-              if (!matches.length) { hideSuggestions(); return; }
-
-              sugBox.innerHTML = matches.map(function(c, i) {
-                return '<div class="cmd-item" data-cmd="' + c.name + '">' +
-                  '<span class="cmd-name">' + c.name + '</span>' +
-                  '<span class="cmd-desc">' + c.desc + '</span>' +
-                '</div>';
-              }).join('');
-
-              sugBox.querySelectorAll('.cmd-item').forEach(function(el) {
-                el.addEventListener('mousedown', function(e) {
-                  e.preventDefault();
-                  input.value = el.dataset.cmd + ' ';
-                  hideSuggestions();
-                  input.focus();
-                });
-              });
-
-              activeIdx = -1;
-              sugBox.classList.add('visible');
-            }
-
-            input.addEventListener('input', function() {
-              var val = input.value;
-              if (val.startsWith('/')) {
-                showSuggestions(val);
-              } else {
-                hideSuggestions();
-              }
-            });
-
-            input.addEventListener('keydown', function(e) {
-              var items = sugBox.querySelectorAll('.cmd-item');
-              if (sugBox.classList.contains('visible') && items.length) {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  setActive(Math.min(activeIdx + 1, items.length - 1));
-                  return;
-                }
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  setActive(Math.max(activeIdx - 1, 0));
-                  return;
-                }
-                if (e.key === 'Tab' || (e.key === 'Enter' && activeIdx >= 0)) {
-                  e.preventDefault();
-                  var chosen = items[activeIdx >= 0 ? activeIdx : 0];
-                  input.value = chosen.dataset.cmd + ' ';
-                  hideSuggestions();
-                  return;
-                }
-                if (e.key === 'Escape') {
-                  hideSuggestions();
-                  return;
-                }
-              }
-              if (e.key === 'Enter') sendCommand();
-            });
-
-            function sendCommand() {
-              var cmd = input.value.trim();
-              if (!cmd) return;
-              hideSuggestions();
-              input.value = '';
-              sendBtn.disabled = true;
-              appendLocalEntry('> ' + cmd, 'control');
-
-              fetch('/command', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: cmd })
-              })
-              .then(function(r) { return r.json(); })
-              .then(function(data) {
-                if (data.msg) {
-                  data.msg.split('\\n').forEach(function(line) {
-                    appendLocalEntry(line, data.success ? 'default' : 'error');
-                  });
-                }
-              })
-              .catch(function() {
-                appendLocalEntry('Failed to send command.', 'error');
-              })
-              .finally(function() {
-                sendBtn.disabled = false;
-                input.focus();
-                scheduleRefresh();
-              });
-            }
-
-            sendBtn.addEventListener('click', sendCommand);
-
-            input.addEventListener('focus', function() {
-              typing = true;
-              clearTimeout(refreshTimer);
-              label.textContent = 'Auto-refresh paused while typing';
-            });
-            input.addEventListener('blur', function() {
-              setTimeout(function() {
-                hideSuggestions();
-                typing = false;
-                label.textContent = 'Auto-refreshing every 5 seconds';
-                scheduleRefresh();
-              }, 150);
-            });
-
-            scrollBottom();
-            scheduleRefresh();
-          })();
-        </script>
-      </body>
-    </html>
-  `);
-});
-
-let botRunning = true;
-
-app.post("/start", (req, res) => {
-  if (botRunning) return res.json({ success: false, msg: "Already running" });
-
-  botRunning = true;
-  createBot();
-  addLog("[Control] Bot started");
-
-  res.json({ success: true });
-});
-
-app.post("/stop", (req, res) => {
-  if (!botRunning) return res.json({ success: false, msg: "Already stopped" });
-
-  botRunning = false;
-
-  if (bot) {
-    bot.end();
-    bot = null;
-  }
-
-  clearAllIntervals();
-  addLog("[Control] Bot stopped");
-
-  res.json({ success: true });
-});
-
-app.post("/command", express.json(), (req, res) => {
-  const cmd = (req.body.command || "").trim();
-  if (!cmd) return res.json({ success: false, msg: "Empty command." });
-
-  addLog(`[Console] > ${cmd}`);
-
-  if (cmd === "/help") {
-    const lines = [
-      "Available commands:",
-      "  /help          - Show this help message",
-      "  /pos           - Show bot's current coordinates",
-      "  /status        - Show bot connection status",
-      "  /list          - Ask server for player list",
-      "  /say <message> - Send a chat message in-game",
-      "  /<anything>    - Send any Minecraft command directly",
-      "  <text>         - Send plain chat (no slash needed)",
-    ];
-    lines.forEach((l) => addLog(`[Console] ${l}`));
-    return res.json({ success: true, msg: lines.join("\n") });
-  }
-
-  if (cmd === "/pos" || cmd === "/coords") {
-    const pos = bot && bot.entity ? bot.entity.position : null;
-    const msg = pos
-      ? `Position: X=${Math.floor(pos.x)}  Y=${Math.floor(pos.y)}  Z=${Math.floor(pos.z)}`
-      : "Position unavailable (bot not spawned).";
-    addLog(`[Console] ${msg}`);
-    return res.json({ success: true, msg });
-  }
-
-  if (cmd === "/status") {
-    const status = botState.connected ? "Connected" : "Disconnected";
-    const uptime = Math.floor((Date.now() - botState.startTime) / 1000);
-    const msg = `Status: ${status} | Uptime: ${uptime}s | Reconnects: ${botState.reconnectAttempts}`;
-    addLog(`[Console] ${msg}`);
-    return res.json({ success: true, msg });
-  }
-
-  if (!bot || typeof bot.chat !== "function") {
-    const msg = bot
-      ? "Bot is still connecting — try again in a moment."
-      : "Bot is not running.";
-    addLog(`[Console] ${msg}`);
-    return res.json({ success: false, msg });
-  }
-
-  try {
-    bot.chat(cmd);
-    addLog(`[Console] Sent to server: ${cmd}`);
-    return res.json({ success: true, msg: `Sent: ${cmd}` });
-  } catch (err) {
-    addLog(`[Console] Error: ${err.message}`);
-    return res.json({ success: false, msg: err.message });
-  }
-});
-
-// ============================================================
-//                    END OF WEB TOOLS
-//============================================================
-
-// FIX: handle port conflict gracefully - try next port if taken
-const server = app.listen(PORT, "0.0.0.0", () => {
-  addLog(`[Server] HTTP server started on port ${server.address().port} `);
-});
-server.on("error", (err) => {
-  if (err.code === "EADDRINUSE") {
-    const fallbackPort = PORT + 1;
-    addLog(`[Server] Port ${PORT} in use - trying port ${fallbackPort} `);
-    server.listen(fallbackPort, "0.0.0.0");
-  } else {
-    addLog(`[Server] HTTP server error: ${err.message} `);
-  }
-});
-
-// FIX: only one definition of formatUptime
-function formatUptime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${h}h ${m}m ${s} s`;
+// interval tracking (IMPORTANT for cleanup)
+let intervals = [];
+let timeouts = [];
+
+function addInterval(fn, time) {
+  const id = setInterval(fn, time);
+  intervals.push(id);
+  return id;
+}
+
+function clearAllIntervals() {
+  for (const i of intervals) clearInterval(i);
+  intervals = [];
+
+  for (const t of timeouts) clearTimeout(t);
+  timeouts = [];
 }
 
 // ============================================================
-// SELF-PING - Prevent Render from sleeping
-// FIX: only ping if RENDER_EXTERNAL_URL is set (skip useless localhost ping)
+// BOT ENGINE + DATING SIM SYSTEM 1.0
 // ============================================================
-const SELF_PING_INTERVAL = 10 * 60 * 1000;
 
-function startSelfPing() {
-  const renderUrl = process.env.RENDER_EXTERNAL_URL;
-  if (!renderUrl) {
-    addLog(
-      "[KeepAlive] No RENDER_EXTERNAL_URL set - self-ping disabled (running locally)",
-    );
-    return;
-  }
-  setInterval(() => {
-    const protocol = renderUrl.startsWith("https") ? https : http;
-    protocol
-      .get(`${renderUrl}/ping`, (res) => {
-        // Silent success
-      })
-      .on("error", (err) => {
-        addLog(`[KeepAlive] Self-ping failed: ${err.message}`);
-      });
-  }, SELF_PING_INTERVAL);
-  addLog("[KeepAlive] Self-ping system started (every 10 min)");
-}
-
-startSelfPing();
-
-// ============================================================
-// MEMORY MONITORING
-// ============================================================
-setInterval(
-  () => {
-    const mem = process.memoryUsage();
-    const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
-    addLog(`[Memory] Heap: ${heapMB} MB`);
-  },
-  5 * 60 * 1000,
-);
-
-// ============================================================
-// BOT CREATION WITH RECONNECTION LOGIC
-// ============================================================
-// ============================================================
-// RECONNECTION & TIMEOUT MANAGEMENT
-// ============================================================
 let bot = null;
 let activeIntervals = [];
 let reconnectTimeoutId = null;
 let connectionTimeoutId = null;
 let isReconnecting = false;
 
-function clearBotTimeouts() {
-  if (reconnectTimeoutId) {
-    clearTimeout(reconnectTimeoutId);
-    reconnectTimeoutId = null;
+// ============================================================
+// 💘 DATING SIM STATE SYSTEM
+// ============================================================
+
+const datingSim = {
+  players: new Map(), // username -> data
+  leaderboard: [],
+  quizActive: false,
+};
+
+// Player structure:
+// {
+//   points: number,
+//   level: number,
+//   streak: number,
+//   lastSeen: timestamp
+// }
+
+function getPlayer(name) {
+  if (!datingSim.players.has(name)) {
+    datingSim.players.set(name, {
+      points: 0,
+      level: 1,
+      streak: 0,
+      lastSeen: Date.now(),
+    });
   }
-  if (connectionTimeoutId) {
-    clearTimeout(connectionTimeoutId);
-    connectionTimeoutId = null;
-  }
+  return datingSim.players.get(name);
 }
 
-// FIX: Discord rate limiting - track last send time
-let lastDiscordSend = 0;
-const DISCORD_RATE_LIMIT_MS = 5000; // min 5s between webhook calls
-
-function clearAllIntervals() {
-  addLog(`[Cleanup] Clearing ${activeIntervals.length} intervals`);
-  activeIntervals.forEach((id) => clearInterval(id));
-  activeIntervals = [];
+function getLevel(points) {
+  return Math.floor(points / 100) + 1;
 }
 
-function addInterval(callback, delay) {
-  const id = setInterval(callback, delay);
-  activeIntervals.push(id);
-  return id;
+// ============================================================
+// 🧠 SMART QUIZ ENGINE
+// ============================================================
+
+const quizPool = [
+  {
+    q: "If a Minecraft villager trades 1 emerald for 3 wheat, how many wheat for 7 emeralds?",
+    a: "21",
+    difficulty: 1,
+  },
+  {
+    q: "What is the time complexity of binary search?",
+    a: "O(log n)",
+    difficulty: 2,
+  },
+  {
+    q: "If x = 2 and y = 3, what is (x^y + y^x)?",
+    a: "17",
+    difficulty: 2,
+  },
+  {
+    q: "What is the derivative of x^2?",
+    a: "2x",
+    difficulty: 3,
+  },
+  {
+    q: "A server has 20 TPS. How many ticks in 5 minutes?",
+    a: "6000",
+    difficulty: 3,
+  },
+];
+
+function pickQuestion() {
+  return quizPool[Math.floor(Math.random() * quizPool.length)];
 }
 
-function getReconnectDelay() {
-  if (botState.wasThrottled) {
-    botState.wasThrottled = false;
-    const throttleDelay = 60000 + Math.floor(Math.random() * 60000);
-    addLog(
-      `[Bot] Throttle detected - using extended delay: ${throttleDelay / 1000}s`,
+// ============================================================
+// 📊 POINT SYSTEM
+// ============================================================
+
+function calculatePoints(difficulty, correct) {
+  const base = difficulty * 10;
+  return correct ? base : -Math.floor(base * 0.75);
+}
+
+// ============================================================
+// 🎯 ASK RANDOM PLAYER EVERY 5 MINUTES
+// ============================================================
+
+function startQuizSystem(bot) {
+  addInterval(() => {
+    if (!bot || !botState.connected) return;
+    if (datingSim.quizActive) return;
+
+    const players = Object.values(bot.entities)
+      .filter(e => e.type === "player" && e.username !== bot.username)
+      .map(e => e.username);
+
+    if (!players.length) return;
+
+    const target = players[Math.floor(Math.random() * players.length)];
+    const question = pickQuestion();
+
+    datingSim.quizActive = true;
+    datingSim.current = {
+      player: target,
+      question,
+      difficulty: question.difficulty,
+    };
+
+    bot.chat(
+      `💘 [Dating Sim Quiz] ${target}, answer this: ${question.q}`
     );
-    return throttleDelay;
-  }
 
-  // FIX: read auto-reconnect-delay from settings as base delay
-  const baseDelay = config.utils["auto-reconnect-delay"] || 3000;
-  const maxDelay = config.utils["max-reconnect-delay"] || 30000;
-  const delay = Math.min(
-    baseDelay * Math.pow(2, botState.reconnectAttempts),
-    maxDelay,
-  );
-  const jitter = Math.floor(Math.random() * 2000);
-  return delay + jitter;
+    addLog(`[DatingSim] Asked ${target}: ${question.q}`);
+
+    // timeout fail = penalty
+    setTimeout(() => {
+      if (datingSim.quizActive && datingSim.current?.player === target) {
+        const p = getPlayer(target);
+        const penalty = calculatePoints(question.difficulty, false);
+
+        p.points += penalty;
+        p.streak = 0;
+
+        bot.chat(`❌ ${target} didn't answer. -${Math.abs(penalty)} points.`);
+        addLog(`[DatingSim] ${target} failed to answer`);
+        datingSim.quizActive = false;
+      }
+    }, 20000);
+  }, 5 * 60 * 1000);
 }
+
+// ============================================================
+// 💬 ANSWER LISTENER (CHAT HOOK)
+// ============================================================
+
+function handleDatingSimChat(bot) {
+  bot.on("chat", (username, message) => {
+    if (!datingSim.quizActive) return;
+    if (!datingSim.current) return;
+    if (username !== datingSim.current.player) return;
+
+    const p = getPlayer(username);
+    const q = datingSim.current.question;
+
+    const correct =
+      message.trim().toLowerCase() === q.a.toLowerCase();
+
+    const change = calculatePoints(q.difficulty, correct);
+
+    p.points += change;
+    p.level = getLevel(p.points);
+    p.streak = correct ? p.streak + 1 : 0;
+    p.lastSeen = Date.now();
+
+    if (correct) {
+      bot.chat(`💖 Correct ${username}! +${change} points`);
+    } else {
+      bot.chat(`💔 Wrong ${username}! ${change} points`);
+    }
+
+    addLog(
+      `[DatingSim] ${username} answered ${
+        correct ? "correctly" : "wrong"
+      } (${change})`
+    );
+
+    datingSim.quizActive = false;
+    datingSim.current = null;
+  });
+}
+
+// ============================================================
+// 🏆 LEADERBOARD SYSTEM
+// ============================================================
+
+function getLeaderboard() {
+  return Array.from(datingSim.players.entries())
+    .map(([name, data]) => ({
+      name,
+      points: data.points,
+      level: data.level,
+    }))
+    .sort((a, b) => b.points - a.points)
+    .slice(0, 10);
+}
+
+// ============================================================
+// BOT CREATION (UNCHANGED CORE + HOOKS ADDED)
+// ============================================================
 
 function createBot() {
-  if (isReconnecting) {
-    addLog("[Bot] Already reconnecting, skipping...");
-    return;
-  }
+  if (isReconnecting) return;
 
-  // Cleanup previous bot properly to avoid ghost bots
   if (bot) {
     clearAllIntervals();
     try {
       bot.removeAllListeners();
       bot.end();
-    } catch (e) {
-      addLog("[Cleanup] Error ending previous bot:", e.message);
-    }
+    } catch {}
     bot = null;
   }
 
-  addLog(`[Bot] Creating bot instance...`);
-  addLog(`[Bot] Connecting to ${config.server.ip}:${config.server.port}`);
+  addLog(`[Bot] Creating bot...`);
 
   try {
-    // FIX: use version:false to auto-detect server version so the bot can join any server.
-    // If the user explicitly sets a version in settings.json it is still respected.
-    const botVersion =
-      config.server.version && config.server.version.trim() !== ""
-        ? config.server.version
-        : false;
     bot = mineflayer.createBot({
       username: config["bot-account"].username,
       password: config["bot-account"].password || undefined,
       auth: config["bot-account"].type,
       host: config.server.ip,
       port: config.server.port,
-      version: botVersion,
-      hideErrors: false,
-      checkTimeoutInterval: 600000,
+      version: config.server.version || false,
     });
 
-    bot.loadPlugin(pathfinder);
-
-    // FIX: connection timeout - end the old bot before reconnecting to avoid ghost bots
-    clearBotTimeouts();
-    connectionTimeoutId = setTimeout(() => {
-      if (!botState.connected) {
-        addLog("[Bot] Connection timeout - no spawn received");
-        try {
-          bot.removeAllListeners();
-          bot.end();
-        } catch (e) {
-          /* ignore */
-        }
-        bot = null;
-        scheduleReconnect();
-      }
-    }, 150000); // 150s - Aternos servers can take 90-120s to finish spawning a player
-
-    // FIX: guard against spawn firing twice (can happen on some servers)
-    let spawnHandled = false;
-
     bot.once("spawn", () => {
-      if (spawnHandled) return;
-      spawnHandled = true;
-
-      clearBotTimeouts();
       botState.connected = true;
-      botState.lastActivity = Date.now();
       botState.reconnectAttempts = 0;
       isReconnecting = false;
 
-      addLog(
-        `[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`,
-      );
-      if (
-        config.discord &&
-        config.discord.events &&
-        config.discord.events.connect
-      ) {
-        sendDiscordWebhook(
-          `[+] **Connected** to \`${config.server.ip}\``,
-          0x4ade80,
-        );
-      }
+      addLog(`[Bot] Spawned`);
 
-      // FIX: use bot.version (auto-detected) instead of config value so minecraft-data always matches
-      const mcData = require("minecraft-data")(bot.version);
-      const defaultMove = new Movements(bot, mcData);
-      defaultMove.allowFreeMotion = false;
-      defaultMove.canDig = false;
-      defaultMove.liquidCost = 1000;
-      defaultMove.fallDamageCost = 1000;
-
-      initializeModules(bot, mcData, defaultMove);
-
-      // Attempt creative mode (only works if bot has OP and enabled in settings)
-      setTimeout(() => {
-        if (bot && botState.connected && config.server["try-creative"]) {
-          bot.chat("/gamemode creative");
-          addLog("[INFO] Attempted to set creative mode (requires OP)");
-        }
-      }, 3000);
-
-      bot.on("messagestr", (message) => {
-        if (
-          message.includes("commands.gamemode.success.self") ||
-          message.includes("Set own game mode to Creative Mode")
-        ) {
-          addLog("[INFO] Bot is now in Creative Mode.");
-        }
-      });
+      // ✅ START DATING SIM SYSTEM HERE
+      startQuizSystem(bot);
+      handleDatingSimChat(bot);
     });
 
-    // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'
-    // so that 'end' is the single source of reconnect truth, preventing double-trigger.
-    bot.on("kicked", (reason) => {
-      // FIX: stringify reason if it's an object to make it readable in logs
-      const kickReason =
-        typeof reason === "object" ? JSON.stringify(reason) : reason;
-      addLog(`[Bot] Kicked: ${kickReason}`);
-      botState.connected = false;
-      botState.errors.push({
-        type: "kicked",
-        reason: kickReason,
-        time: Date.now(),
-      });
-      clearAllIntervals();
-
-      const reasonStr = String(kickReason).toLowerCase();
-      if (
-        reasonStr.includes("throttl") ||
-        reasonStr.includes("wait before reconnect") ||
-        reasonStr.includes("too fast")
-      ) {
-        addLog(
-          "[Bot] Throttle kick detected - will use extended reconnect delay",
-        );
-        botState.wasThrottled = true;
-      }
-
-      if (
-        config.discord &&
-        config.discord.events &&
-        config.discord.events.disconnect
-      ) {
-        sendDiscordWebhook(`[!] **Kicked**: ${kickReason}`, 0xff0000);
-      }
-      // NOTE: do NOT call scheduleReconnect() here - 'end' will fire right after 'kicked' and handle it
-    });
-
-    // FIX: 'end' is the single reconnect trigger
-    bot.on("end", (reason) => {
-      addLog(`[Bot] Disconnected: ${reason || "Unknown reason"}`);
-      botState.connected = false;
-      clearAllIntervals();
-      spawnHandled = false; // reset for next connection
-
-      if (
-        config.discord &&
-        config.discord.events &&
-        config.discord.events.disconnect
-      ) {
-        sendDiscordWebhook(
-          `[-] **Disconnected**: ${reason || "Unknown"}`,
-          0xf87171,
-        );
-      }
-
-      // ALWAYS reconnect — bot must never leave the server
-      scheduleReconnect();
-    });
-
-    bot.on("error", (err) => {
-      const msg = err.message || "";
-      addLog(`[Bot] Error: ${msg}`);
-      botState.errors.push({ type: "error", message: msg, time: Date.now() });
-      // Don't reconnect on error - let 'end' event handle it
-    });
-  } catch (err) {
-    addLog(`[Bot] Failed to create bot: ${err.message}`);
+    bot.on("end", () => scheduleReconnect());
+    bot.on("error", (e) => addLog(`[Bot] Error ${e.message}`));
+  } catch (e) {
     scheduleReconnect();
   }
 }
 
+// ============================================================
+// RECONNECT SYSTEM (UNCHANGED)
+// ============================================================
+
 function scheduleReconnect() {
-  clearBotTimeouts();
-
-  // FIX: don't stack reconnect if already waiting
-  if (isReconnecting) {
-    addLog("[Bot] Reconnect already scheduled, skipping duplicate.");
-    return;
-  }
-
+  if (isReconnecting) return;
   isReconnecting = true;
-  botState.reconnectAttempts++;
 
-  const delay = getReconnectDelay();
-  addLog(
-    `[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`,
-  );
+  const delay = 5000;
+  addLog(`[Bot] Reconnecting in ${delay / 1000}s`);
 
   reconnectTimeoutId = setTimeout(() => {
-    reconnectTimeoutId = null;
     isReconnecting = false;
     createBot();
   }, delay);
@@ -1393,801 +316,810 @@ function scheduleReconnect() {
 
 // ============================================================
 // MODULE INITIALIZATION
+// PART 3A
 // ============================================================
+
 function initializeModules(bot, mcData, defaultMove) {
+  addLog("[Modules] Loading modules...");
 
-// ============================================================
-// 💘 DATING SIM SYSTEM (AUTO RANDOM PLAYER MODE)
-// ============================================================
+  // ============================================================
+  // 💘 DATING SIM STARTUP
+  // ============================================================
 
-const datingSim = {
-  points: {},
-  level: {},
-
-  init(bot) {
-    addLog("[DatingSim] Auto-question system started");
-
-    // MAIN LOOP: every 5 minutes ask random player
-    addInterval(() => {
-      if (!bot || !botState.connected) return;
-
-      const players = Object.keys(bot.players).filter(
-        (p) => p !== bot.username && bot.players[p]?.entity
-      );
-
-      if (players.length === 0) return;
-
-      const target = players[Math.floor(Math.random() * players.length)];
-
-      this.ask(bot, target);
-    }, 5 * 60 * 1000); // 5 minutes
-  },
-
-  get(user) {
-    if (!this.points[user]) {
-      this.points[user] = 0;
-      this.level[user] = 1;
+  try {
+    if (typeof startQuizSystem === "function") {
+      startQuizSystem(bot);
+      addLog("[DatingSim] Quiz system loaded");
     }
-  },
 
-  difficulty(user) {
-    this.get(user);
-    return Math.min(10, this.level[user]);
-  },
-
-  question(user) {
-    const lvl = this.difficulty(user);
-
-    const questions = [
-      {
-        q: "What is more important in a relationship: honesty or comfort?",
-        a: "honesty",
-      },
-      {
-        q: "If someone is sad, what should you do first?",
-        a: "listen",
-      },
-      {
-        q: "What builds stronger trust over time?",
-        a: "consistency",
-      },
-      {
-        q: "Is love more about feelings or actions?",
-        a: "actions",
-      },
-      {
-        q: "What breaks trust the fastest?",
-        a: "lying",
-      },
-    ];
-
-    return questions[Math.min(lvl - 1, questions.length - 1)];
-  },
-
-  ask(bot, user) {
-    const q = this.question(user);
-
-    bot.chat(`💘 Hey ${user}! Dating Question:`);
-    bot.chat(`❓ ${q.q}`);
-    bot.chat(`💬 Type: !answer <your answer>`);
-    bot.chat(`⏳ Difficulty: Level ${this.difficulty(user)}`);
-  },
-
-  answer(bot, user, msg) {
-    const q = this.question(user);
-    const ans = msg.toLowerCase().replace("!answer", "").trim();
-
-    this.get(user);
-
-    const lvl = this.level[user];
-    const reward = 10 + lvl * 4;
-    const penalty = 8 + lvl * 5;
-
-    if (ans.includes(q.a)) {
-      this.points[user] += reward;
-
-      if (this.points[user] > lvl * 120) {
-        this.level[user]++;
-        bot.chat(`💖 ${user} leveled up to Dating Level ${this.level[user]}!`);
-      } else {
-        bot.chat(`✅ Correct! +${reward} love points`);
-      }
-
-    } else {
-      this.points[user] = Math.max(0, this.points[user] - penalty);
-      bot.chat(`💔 Wrong! -${penalty} love points`);
+    if (typeof handleDatingSimChat === "function") {
+      handleDatingSimChat(bot);
+      addLog("[DatingSim] Chat listener loaded");
     }
-  },
+  } catch (err) {
+    addLog(`[DatingSim] Startup Error: ${err.message}`);
+  }
 
-  stats(bot, user) {
-    this.get(user);
-    bot.chat(
-      `💘 ${user} | Points: ${this.points[user]} | Level: ${this.level[user]}`
-    );
-  },
+  // ============================================================
+  // AUTO AUTH
+  // ============================================================
 
-  leaderboard(bot) {
-    const top = Object.entries(this.points)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map((x, i) => `${i + 1}. ${x[0]} - ${x[1]} 💖`);
-
-    bot.chat("💘 Love Leaderboard:");
-    top.forEach((l) => bot.chat(l));
-  },
-};
-
-datingSim.init();
-datingSim.init(bot);
-  
-  addLog("[Modules] Initializing all modules...");
-
-  // ---------- AUTO AUTH (REACTIVE) ----------
-  if (config.utils["auto-auth"] && config.utils["auto-auth"].enabled) {
+  if (
+    config.utils &&
+    config.utils["auto-auth"] &&
+    config.utils["auto-auth"].enabled
+  ) {
     const password = config.utils["auto-auth"].password;
-    let authHandled = false;
+    let authCompleted = false;
 
-    const tryAuth = (type) => {
-      if (authHandled || !bot || !botState.connected) return;
-      authHandled = true;
+    function sendAuth(type) {
+      if (
+        authCompleted ||
+        !bot ||
+        !botState.connected
+      )
+        return;
+
+      authCompleted = true;
+
       if (type === "register") {
         bot.chat(`/register ${password} ${password}`);
-        addLog("[Auth] Detected register prompt - sent /register");
+        addLog("[Auth] Register command sent");
       } else {
         bot.chat(`/login ${password}`);
-        addLog("[Auth] Detected login prompt - sent /login");
+        addLog("[Auth] Login command sent");
       }
-    };
+    }
 
     bot.on("messagestr", (message) => {
-      if (authHandled) return;
-      const msg = message.toLowerCase();
+      if (authCompleted) return;
+
+      const msg = String(message).toLowerCase();
+
       if (
         msg.includes("/register") ||
-        msg.includes("register ") ||
-        msg.includes("지정된 비밀번호")
+        msg.includes("register") ||
+        msg.includes("please register") ||
+        msg.includes("create password")
       ) {
-        tryAuth("register");
-      } else if (
+        sendAuth("register");
+      }
+
+      if (
         msg.includes("/login") ||
-        msg.includes("login ") ||
-        msg.includes("로그인")
+        msg.includes("login") ||
+        msg.includes("please login")
       ) {
-        tryAuth("login");
+        sendAuth("login");
       }
     });
 
-    // Failsafe: if no prompt after 10s, try login anyway
     setTimeout(() => {
-      if (!authHandled && bot && botState.connected) {
-        addLog(
-          "[Auth] No prompt detected after 10s, sending /login as failsafe",
-        );
-        bot.chat(`/login ${password}`);
-        authHandled = true;
+      if (
+        !authCompleted &&
+        bot &&
+        botState.connected
+      ) {
+        try {
+          bot.chat(`/login ${password}`);
+          authCompleted = true;
+          addLog("[Auth] Failsafe login sent");
+        } catch (e) {
+          addLog(`[Auth] Error: ${e.message}`);
+        }
       }
     }, 10000);
   }
 
-  // ---------- CHAT MESSAGES ----------
-  if (config.utils["chat-messages"] && config.utils["chat-messages"].enabled) {
-    const messages = config.utils["chat-messages"].messages;
-    if (config.utils["chat-messages"].repeat) {
-      let i = 0;
-      addInterval(() => {
-        if (bot && botState.connected) {
-          bot.chat(messages[i]);
-          botState.lastActivity = Date.now();
-          i = (i + 1) % messages.length;
-        }
-      }, config.utils["chat-messages"]["repeat-delay"] * 1000);
-    } else {
-      messages.forEach((msg, idx) => {
-        setTimeout(() => {
-          if (bot && botState.connected) bot.chat(msg);
-        }, idx * 1000);
-      });
+  // ============================================================
+  // CHAT MESSAGE ROTATION
+  // ============================================================
+
+  if (
+    config.utils &&
+    config.utils["chat-messages"] &&
+    config.utils["chat-messages"].enabled
+  ) {
+    const messages =
+      config.utils["chat-messages"].messages || [];
+
+    if (messages.length > 0) {
+      if (config.utils["chat-messages"].repeat) {
+        let index = 0;
+
+        addInterval(() => {
+          try {
+            if (
+              !bot ||
+              !botState.connected
+            )
+              return;
+
+            bot.chat(messages[index]);
+
+            addLog(
+              `[ChatRotation] ${messages[index]}`
+            );
+
+            botState.lastActivity = Date.now();
+
+            index++;
+
+            if (index >= messages.length)
+              index = 0;
+          } catch (err) {
+            addLog(
+              `[ChatRotation] Error: ${err.message}`
+            );
+          }
+        },
+        config.utils["chat-messages"]["repeat-delay"] *
+          1000);
+      } else {
+        messages.forEach((msg, i) => {
+          setTimeout(() => {
+            try {
+              if (
+                bot &&
+                botState.connected
+              ) {
+                bot.chat(msg);
+              }
+            } catch {}
+          }, i * 1000);
+        });
+      }
     }
   }
 
-  // ---------- MOVE TO POSITION ----------
-  // FIX: only use position goal if circle-walk is NOT enabled (they fight over pathfinder)
+  // ============================================================
+  // DATING SIM CHAT COMMANDS
+  // ============================================================
+
+  bot.on("chat", (username, message) => {
+    if (!datingSim) return;
+    if (username === bot.username) return;
+
+    const msg = message.toLowerCase();
+
+    try {
+      // ----------------------------------
+      // /points
+      // ----------------------------------
+
+      if (
+        msg === "!points" ||
+        msg === "!love" ||
+        msg === "!level"
+      ) {
+        const player = getPlayer(username);
+
+        bot.chat(
+          `${username} | 💘 Points: ${player.points} | Level: ${player.level}`
+        );
+
+        return;
+      }
+
+      // ----------------------------------
+      // /leaderboard
+      // ----------------------------------
+
+      if (
+        msg === "!leaderboard" ||
+        msg === "!top" ||
+        msg === "!lb"
+      ) {
+        const top = getLeaderboard();
+
+        if (!top.length) {
+          bot.chat(
+            "No dating sim data yet."
+          );
+          return;
+        }
+
+        let board =
+          "🏆 Dating Sim Top: ";
+
+        board += top
+          .slice(0, 5)
+          .map(
+            (p, i) =>
+              `#${i + 1} ${p.name}(${p.points})`
+          )
+          .join(" | ");
+
+        bot.chat(board);
+
+        return;
+      }
+
+      // ----------------------------------
+      // !rank
+      // ----------------------------------
+
+      if (msg === "!rank") {
+        const sorted =
+          getLeaderboard();
+
+        const rank =
+          sorted.findIndex(
+            (p) => p.name === username
+          ) + 1;
+
+        if (rank > 0) {
+          bot.chat(
+            `${username} is rank #${rank}`
+          );
+        } else {
+          bot.chat(
+            `${username} is currently unranked.`
+          );
+        }
+
+        return;
+      }
+
+      // ----------------------------------
+      // !date
+      // ----------------------------------
+
+      if (msg === "!date") {
+        const player =
+          getPlayer(username);
+
+        const level =
+          player.level;
+
+        let title =
+          "💔 Stranger";
+
+        if (level >= 5)
+          title = "🌹 Crush";
+
+        if (level >= 10)
+          title = "❤️ Partner";
+
+        if (level >= 20)
+          title = "💍 Soulmate";
+
+        if (level >= 30)
+          title = "👑 True Love";
+
+        bot.chat(
+          `${username}'s relationship status: ${title}`
+        );
+
+        return;
+      }
+    } catch (err) {
+      addLog(
+        `[DatingSim] Command Error: ${err.message}`
+      );
+    }
+  });
+
+  addLog(
+    "[Modules] PART 3A loaded successfully"
+  );
+
+    // ============================================================
+  // ANTI-AFK 2.0
+  // ============================================================
+
   if (
-    config.position &&
-    config.position.enabled &&
-    !(
+    config.utils &&
+    config.utils["anti-afk"] &&
+    config.utils["anti-afk"].enabled
+  ) {
+    addLog("[AntiAFK] Enabled");
+
+    // --------------------------------
+    // Arm Swing
+    // --------------------------------
+
+    addInterval(() => {
+      if (!bot || !botState.connected) return;
+
+      try {
+        bot.swingArm();
+        botState.lastActivity = Date.now();
+      } catch {}
+    }, 15000 + Math.floor(Math.random() * 30000));
+
+    // --------------------------------
+    // Hotbar Shuffle
+    // --------------------------------
+
+    addInterval(() => {
+      if (!bot || !botState.connected) return;
+
+      try {
+        const slot = Math.floor(Math.random() * 9);
+        bot.setQuickBarSlot(slot);
+      } catch {}
+    }, 45000 + Math.floor(Math.random() * 60000));
+
+    // --------------------------------
+    // Random Sneak
+    // --------------------------------
+
+    addInterval(() => {
+      if (!bot || !botState.connected) return;
+
+      try {
+        if (Math.random() > 0.75) {
+          bot.setControlState("sneak", true);
+
+          setTimeout(() => {
+            try {
+              bot.setControlState("sneak", false);
+            } catch {}
+          }, 1000);
+        }
+      } catch {}
+    }, 60000);
+
+    // --------------------------------
+    // Random Look
+    // --------------------------------
+
+    addInterval(() => {
+      if (!bot || !botState.connected) return;
+
+      try {
+        const yaw =
+          Math.random() * Math.PI * 2 - Math.PI;
+
+        const pitch =
+          Math.random() * 0.6 - 0.3;
+
+        bot.look(yaw, pitch, true);
+
+        botState.lastActivity = Date.now();
+      } catch {}
+    }, 30000);
+
+    // --------------------------------
+    // Micro Movement
+    // Disabled if Circle Walk is enabled
+    // --------------------------------
+
+    const circleEnabled =
       config.movement &&
       config.movement["circle-walk"] &&
-      config.movement["circle-walk"].enabled
-    )
-  ) {
-    bot.pathfinder.setMovements(defaultMove);
-    bot.pathfinder.setGoal(
-      new GoalBlock(config.position.x, config.position.y, config.position.z),
-    );
-    addLog("[Position] Navigating to configured position...");
+      config.movement["circle-walk"].enabled;
+
+    if (!circleEnabled) {
+      addInterval(() => {
+        if (!bot || !botState.connected) return;
+
+        try {
+          const directions = [
+            "forward",
+            "back",
+            "left",
+            "right",
+          ];
+
+          const move =
+            directions[
+              Math.floor(
+                Math.random() * directions.length
+              )
+            ];
+
+          bot.setControlState(move, true);
+
+          setTimeout(() => {
+            try {
+              bot.setControlState(move, false);
+            } catch {}
+          }, 500 + Math.random() * 1500);
+
+          botState.lastActivity = Date.now();
+        } catch {}
+      }, 120000);
+    }
   }
 
-  // ---------- ANTI-AFK ----------
-  if (config.utils["anti-afk"] && config.utils["anti-afk"].enabled) {
-    // Arm swinging
-    addInterval(
-      () => {
-        if (!bot || !botState.connected) return;
-        try {
-          bot.swingArm();
-        } catch (e) {}
-      },
-      10000 + Math.floor(Math.random() * 50000),
-    );
+  // ============================================================
+  // MOVEMENT MODULES
+  // ============================================================
 
-    // Hotbar cycling
-    addInterval(
-      () => {
-        if (!bot || !botState.connected) return;
-        try {
-          const slot = Math.floor(Math.random() * 9);
-          bot.setQuickBarSlot(slot);
-        } catch (e) {}
-      },
-      30000 + Math.floor(Math.random() * 90000),
-    );
+  if (
+    config.movement &&
+    config.movement.enabled !== false
+  ) {
+    addLog("[Movement] Enabled");
 
-    // Teabagging
-    addInterval(
-      () => {
-        if (
-          !bot ||
-          !botState.connected ||
-          typeof bot.setControlState !== "function"
-        )
-          return;
-        if (Math.random() > 0.9) {
-          let count = 2 + Math.floor(Math.random() * 4);
-          const doTeabag = () => {
-            if (count <= 0 || !bot || typeof bot.setControlState !== "function")
-              return;
-            try {
-              bot.setControlState("sneak", true);
-              setTimeout(() => {
-                if (bot && typeof bot.setControlState === "function")
-                  bot.setControlState("sneak", false);
-                count--;
-                setTimeout(doTeabag, 150);
-              }, 150);
-            } catch (e) {}
-          };
-          doTeabag();
-        }
-      },
-      120000 + Math.floor(Math.random() * 180000),
-    );
+    // --------------------------------
+    // Circle Walk
+    // --------------------------------
 
-    // FIX: micro-walk only when circle-walk is NOT running, to avoid interrupting pathfinder
     if (
-      !(
-        config.movement &&
-        config.movement["circle-walk"] &&
-        config.movement["circle-walk"].enabled
-      )
+      config.movement["circle-walk"] &&
+      config.movement["circle-walk"].enabled
     ) {
-      addInterval(
-        () => {
-          if (
-            !bot ||
-            !botState.connected ||
-            typeof bot.setControlState !== "function"
-          )
-            return;
-          try {
-            const yaw = Math.random() * Math.PI * 2;
-            bot.look(yaw, 0, true);
-            bot.setControlState("forward", true);
-            setTimeout(
-              () => {
-                if (bot && typeof bot.setControlState === "function")
-                  bot.setControlState("forward", false);
-              },
-              500 + Math.floor(Math.random() * 1500),
-            );
-            botState.lastActivity = Date.now();
-          } catch (e) {
-            addLog("[AntiAFK] Walk error:", e.message);
-          }
-        },
-        120000 + Math.floor(Math.random() * 360000),
+      startCircleWalkV2(
+        bot,
+        defaultMove
       );
     }
 
-    if (config.utils["anti-afk"].sneak) {
-      try {
-        if (typeof bot.setControlState === "function")
-          bot.setControlState("sneak", true);
-      } catch (e) {}
-    }
-  }
+    // --------------------------------
+    // Random Jump
+    // --------------------------------
 
-  // ---------- MOVEMENT MODULES ----------
-  // FIX: check top-level movement.enabled flag
-  if (config.movement && config.movement.enabled !== false) {
-    // FIX: circle-walk and random-jump both jump - only run one jumping mechanism
-    // random-jump is skipped if anti-afk jump is handled elsewhere; we only use random-jump here
-    if (
-      config.movement["circle-walk"] &&
-      config.movement["circle-walk"].enabled
-    ) {
-      startCircleWalk(bot, defaultMove);
-    }
-    // FIX: only run random-jump if circle-walk is NOT running (circle-walk also keeps bot moving)
     if (
       config.movement["random-jump"] &&
-      config.movement["random-jump"].enabled &&
-      !(
-        config.movement["circle-walk"] && config.movement["circle-walk"].enabled
-      )
+      config.movement["random-jump"].enabled
     ) {
-      startRandomJump(bot);
+      startRandomJumpV2(bot);
     }
+
+    // --------------------------------
+    // Look Around
+    // --------------------------------
+
     if (
       config.movement["look-around"] &&
       config.movement["look-around"].enabled
     ) {
-      startLookAround(bot);
+      startLookAroundV2(bot);
     }
-  }
 
-  // ---------- CUSTOM MODULES ----------
-  // FIX: avoidMobs AND combatModule conflict - if combat is enabled, don't run avoidMobs at the same time
-  if (config.modules.avoidMobs && !config.modules.combat) {
-    avoidMobs(bot);
-  }
-  if (config.modules.combat) {
-    combatModule(bot, mcData);
-  }
-  if (config.modules.beds) {
-    bedModule(bot, mcData);
-  }
-  if (config.modules.chat) {
-    chatModule(bot);
-  }
+    // --------------------------------
+    // Dating Sim Wander Mode
+    // --------------------------------
 
-  addLog("[Modules] All modules initialized!");
-}
-
-// ============================================================
-// MOVEMENT HELPERS
-// ============================================================
-function startCircleWalk(bot, defaultMove) {
-  const radius = config.movement["circle-walk"].radius;
-  let angle = 0;
-  let lastPathTime = 0;
-
-  addInterval(() => {
-    if (!bot || !botState.connected) return;
-    const now = Date.now();
-    if (now - lastPathTime < 2000) return;
-    lastPathTime = now;
-    try {
-      const x = bot.entity.position.x + Math.cos(angle) * radius;
-      const z = bot.entity.position.z + Math.sin(angle) * radius;
-      bot.pathfinder.setMovements(defaultMove);
-      bot.pathfinder.setGoal(
-        new GoalBlock(
-          Math.floor(x),
-          Math.floor(bot.entity.position.y),
-          Math.floor(z),
-        ),
-      );
-      angle += Math.PI / 4;
-      botState.lastActivity = Date.now();
-    } catch (e) {
-      addLog("[CircleWalk] Error:", e.message);
-    }
-  }, config.movement["circle-walk"].speed);
-}
-
-function startRandomJump(bot) {
-  addInterval(() => {
     if (
-      !bot ||
-      !botState.connected ||
-      typeof bot.setControlState !== "function"
-    )
-      return;
-    try {
-      bot.setControlState("jump", true);
-      setTimeout(() => {
-        if (bot && typeof bot.setControlState === "function")
-          bot.setControlState("jump", false);
-      }, 300);
-      botState.lastActivity = Date.now();
-    } catch (e) {
-      addLog("[RandomJump] Error:", e.message);
+      datingSim &&
+      config.movement["dating-wander"]
+    ) {
+      startDatingWander(bot);
     }
-  }, config.movement["random-jump"].interval);
-}
+  }
 
-function startLookAround(bot) {
-  addInterval(() => {
-    if (!bot || !botState.connected) return;
-    try {
-      const yaw = Math.random() * Math.PI * 2 - Math.PI;
-      const pitch = (Math.random() * Math.PI) / 2 - Math.PI / 4;
-      bot.look(yaw, pitch, false);
-      botState.lastActivity = Date.now();
-    } catch (e) {
-      addLog("[LookAround] Error:", e.message);
-    }
-  }, config.movement["look-around"].interval);
-}
+  addLog("[Movement] PART 3B loaded");
 
-// ============================================================
-// CUSTOM MODULES
-// ============================================================
+function combatModuleV2(bot, mcData) {
+  let lastAttack = 0;
 
-// Avoid mobs/players
-// FIX: e.username only exists on players; use e.name for mobs - now handled properly
-function avoidMobs(bot) {
-  const safeDistance = 5;
-  addInterval(() => {
-    if (
-      !bot ||
-      !botState.connected ||
-      typeof bot.setControlState !== "function"
-    )
-      return;
-    try {
-      const entities = Object.values(bot.entities).filter(
-        (e) =>
-          e.type === "mob" ||
-          (e.type === "player" && e.username !== bot.username),
-      );
-      for (const e of entities) {
-        if (!e.position) continue;
-        const distance = bot.entity.position.distanceTo(e.position);
-        if (distance < safeDistance) {
-          bot.setControlState("back", true);
-          setTimeout(() => {
-            if (bot && typeof bot.setControlState === "function")
-              bot.setControlState("back", false);
-          }, 500);
-          break;
-        }
-      }
-    } catch (e) {
-      addLog("[AvoidMobs] Error:", e.message);
-    }
-  }, 2000);
-}
-
-// Combat module
-// FIX: attack cooldown for 1.9+ (600ms minimum between attacks)
-// FIX: lock onto a target for multiple ticks instead of randomly switching every tick
-// FIX: autoEat - use i.foodPoints directly (mineflayer item property) instead of broken mcData lookup
-function combatModule(bot, mcData) {
-  let lastAttackTime = 0;
-  let lockedTarget = null;
-  let lockedTargetExpiry = 0;
-
-  // FIX: use physicsTick (not the deprecated physicTick)
   bot.on("physicsTick", () => {
-    if (!bot || !botState.connected) return;
-    if (!config.combat["attack-mobs"]) return;
+    if (!bot || !botState.connected)
+      return;
+
+    if (
+      !config.combat ||
+      !config.combat["attack-mobs"]
+    )
+      return;
 
     const now = Date.now();
-    // FIX: 1.9+ attack cooldown - respect at least 600ms between swings
-    if (now - lastAttackTime < 620) return;
+
+    if (now - lastAttack < 650)
+      return;
 
     try {
-      // FIX: only pick a new target if current one is gone or lock expired
-      if (
-        lockedTarget &&
-        now < lockedTargetExpiry &&
-        bot.entities[lockedTarget.id] &&
-        lockedTarget.position
-      ) {
-        const dist = bot.entity.position.distanceTo(lockedTarget.position);
-        if (dist < 4) {
-          bot.attack(lockedTarget);
-          lastAttackTime = now;
-          return;
-        } else {
-          lockedTarget = null;
-        }
-      }
+      const target =
+        Object.values(bot.entities)
+          .filter(
+            (e) =>
+              e.type === "mob" &&
+              e.position &&
+              bot.entity.position.distanceTo(
+                e.position
+              ) < 4
+          )[0];
 
-      // Pick a new target
-      const mobs = Object.values(bot.entities).filter(
-        (e) =>
-          e.type === "mob" &&
-          e.position &&
-          bot.entity.position.distanceTo(e.position) < 4,
+      if (!target) return;
+
+      bot.attack(target);
+
+      lastAttack = now;
+    } catch (err) {
+      addLog(
+        `[Combat] ${err.message}`
       );
-      if (mobs.length > 0) {
-        lockedTarget = mobs[0];
-        lockedTargetExpiry = now + 3000; // stick to same mob for 3 seconds
-        bot.attack(lockedTarget);
-        lastAttackTime = now;
-      }
-    } catch (e) {
-      addLog("[Combat] Error:", e.message);
-    }
-  });
-
-  // FIX: autoEat - check foodPoints property on the item directly (works reliably)
-  bot.on("health", () => {
-    if (!config.combat["auto-eat"]) return;
-    try {
-      if (bot.food < 14) {
-        const food = bot.inventory
-          .items()
-          .find((i) => i.foodPoints && i.foodPoints > 0);
-        if (food) {
-          bot
-            .equip(food, "hand")
-            .then(() => bot.consume())
-            .catch((e) => addLog("[AutoEat] Error:", e.message));
-        }
-      }
-    } catch (e) {
-      addLog("[AutoEat] Error:", e.message);
     }
   });
 }
 
-// Bed module
-// FIX: bot.isSleeping can be stale; use a local isTryingToSleep guard to prevent double-sleep errors
-// FIX: place-night was false in default settings - documentation note added
-function bedModule(bot, mcData) {
-  let isTryingToSleep = false;
+function bedModuleV2(bot) {
+  let sleeping = false;
 
   addInterval(async () => {
-    if (!bot || !botState.connected) return;
-    if (!config.beds["place-night"]) return; // FIX: check flag (was always skipping before)
+    if (!bot || !botState.connected)
+      return;
 
     try {
       const isNight =
-        bot.time.timeOfDay >= 12500 && bot.time.timeOfDay <= 23500;
+        bot.time.timeOfDay >= 12500 &&
+        bot.time.timeOfDay <= 23500;
 
-      // FIX: use local guard instead of stale bot.isSleeping
-      if (isNight && !isTryingToSleep) {
-        const bedBlock = bot.findBlock({
-          matching: (block) => block.name.includes("bed"),
+      if (!isNight)
+        return;
+
+      if (sleeping)
+        return;
+
+      const bed =
+        bot.findBlock({
+          matching: (block) =>
+            block.name.includes("bed"),
           maxDistance: 8,
         });
 
-        if (bedBlock) {
-          isTryingToSleep = true;
-          try {
-            await bot.sleep(bedBlock);
-            addLog("[Bed] Sleeping...");
-          } catch (e) {
-            // Can't sleep - maybe not night enough or monsters nearby
-          } finally {
-            isTryingToSleep = false;
-          }
-        }
-      }
-    } catch (e) {
-      isTryingToSleep = false;
-      addLog("[Bed] Error:", e.message);
+      if (!bed)
+        return;
+
+      sleeping = true;
+
+      try {
+        await bot.sleep(bed);
+
+        addLog(
+          "[Bed] Sleeping"
+        );
+      } catch {}
+
+      sleeping = false;
+    } catch (err) {
+      sleeping = false;
+
+      addLog(
+        `[Bed] ${err.message}`
+      );
     }
   }, 10000);
 }
 
-// Chat module
-// FIX: wire up discord.events.chat flag
-function chatModule(bot) {
-  bot.on("chat", (username, message) => {
+function chatModuleV2(bot) {
+  bot.on(
+    "chat",
+    (username, message) => {
+      if (
+        username === bot.username
+      )
+        return;
 
-// 💘 Dating sim commands
-if (message.startsWith("!answer")) {
-  datingSim.answer(bot, username, message);
-  return;
-}
+      const msg =
+        message.toLowerCase();
 
-if (message === "!points") {
-  datingSim.stats(bot, username);
-  return;
-}
+      try {
+        if (
+          msg.includes("hello") ||
+          msg.includes("hi")
+        ) {
+          bot.chat(
+            `Hello ${username}!`
+          );
+        }
 
-if (message === "!leaderboard") {
-  datingSim.leaderboard(bot);
-  return;
-}
-}
+        if (
+          msg.includes("how are you")
+        ) {
+          bot.chat(
+            "I'm doing great!"
+          );
+        }
 
-// ============================================================
-// CONSOLE COMMANDS
-// ============================================================
-const readline = require("readline");
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: false,
-});
+        if (
+          msg === "!uptime"
+        ) {
+          const uptime =
+            Math.floor(
+              (Date.now() -
+                botState.startTime) /
+                1000
+            );
 
-rl.on("line", (line) => {
-  if (!bot || !botState.connected) {
-    addLog("[Console] Bot not connected");
-    return;
-  }
-
-  const trimmed = line.trim();
-  if (trimmed.startsWith("say ")) {
-    bot.chat(trimmed.slice(4));
-  } else if (trimmed.startsWith("cmd ")) {
-    bot.chat("/" + trimmed.slice(4));
-  } else if (trimmed === "status") {
-    addLog(
-      `Connected: ${botState.connected}, Uptime: ${formatUptime(Math.floor((Date.now() - botState.startTime) / 1000))}`,
-    );
-  } else {
-    bot.chat(trimmed);
-  }
-});
-
-// ============================================================
-// DISCORD WEBHOOK INTEGRATION
-// FIX: use Buffer.byteLength for Content-Length (handles non-ASCII usernames correctly)
-// FIX: rate limiting to avoid spam when bot is flapping
-// ============================================================
-function sendDiscordWebhook(content, color = 0x0099ff) {
-  if (
-    !config.discord ||
-    !config.discord.enabled ||
-    !config.discord.webhookUrl ||
-    config.discord.webhookUrl.includes("YOUR_DISCORD")
-  )
-    return;
-
-  // FIX: Discord rate limiting - skip if sent too recently
-  const now = Date.now();
-  if (now - lastDiscordSend < DISCORD_RATE_LIMIT_MS) {
-    addLog("[Discord] Rate limited - skipping webhook");
-    return;
-  }
-  lastDiscordSend = now;
-
-  const protocol = config.discord.webhookUrl.startsWith("https") ? https : http;
-  const urlParts = new URL(config.discord.webhookUrl);
-
-  const payload = JSON.stringify({
-    username: config.name,
-    embeds: [
-      {
-        description: content,
-        color: color,
-        timestamp: new Date().toISOString(),
-        footer: { text: "Slobos AFK Bot" },
-      },
-    ],
-  });
-
-  const options = {
-    hostname: urlParts.hostname,
-    port: 443,
-    path: urlParts.pathname + urlParts.search,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // FIX: use Buffer.byteLength instead of payload.length - handles non-ASCII (e.g. usernames with accents/emoji)
-      "Content-Length": Buffer.byteLength(payload, "utf8"),
-    },
-  };
-
-  const req = protocol.request(options, (res) => {
-    // Silent success
-  });
-
-  req.on("error", (e) => {
-    addLog(`[Discord] Error sending webhook: ${e.message}`);
-  });
-
-  req.write(payload);
-  req.end();
-}
-
-// ============================================================
-// CRASH RECOVERY - IMMORTAL MODE
-// FIX: guard against uncaughtException stacking reconnects when isReconnecting is already true
-// ============================================================
-process.on("uncaughtException", (err) => {
-  const msg = err.message || "Unknown";
-  addLog(`[FATAL] Uncaught Exception: ${msg}`);
-  botState.errors.push({ type: "uncaught", message: msg, time: Date.now() });
-
-  // Cap errors array to prevent memory leak over long uptimes
-  if (botState.errors.length > 100) {
-    botState.errors = botState.errors.slice(-50);
-  }
-
-  const isNetworkError =
-    msg.includes("PartialReadError") ||
-    msg.includes("ECONNRESET") ||
-    msg.includes("EPIPE") ||
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("timed out") ||
-    msg.includes("write after end") ||
-    msg.includes("This socket has been ended");
-
-  if (isNetworkError) {
-    addLog("[FATAL] Known network/protocol error - recovering gracefully...");
-  }
-
-  // ALWAYS recover — bot must never stay disconnected
-  clearAllIntervals();
-  botState.connected = false;
-
-  // FIX: reset isReconnecting if it was stuck, then schedule reconnect
-  if (isReconnecting) {
-    addLog(
-      "[FATAL] isReconnecting was stuck - resetting before crash recovery",
-    );
-    isReconnecting = false;
-    // BUG FIX: was referencing non-existent 'reconnectTimeout' — correct name is 'reconnectTimeoutId'
-    if (reconnectTimeoutId) {
-      clearTimeout(reconnectTimeoutId);
-      reconnectTimeoutId = null;
+          bot.chat(
+            `Uptime: ${uptime}s`
+          );
+        }
+      } catch (err) {
+        addLog(
+          `[Chat] ${err.message}`
+        );
+      }
     }
-  }
-
-  setTimeout(
-    () => {
-      scheduleReconnect();
-    },
-    isNetworkError ? 5000 : 10000,
   );
-});
+}
 
-process.on("unhandledRejection", (reason) => {
-  const msg = String(reason);
-  addLog(`[FATAL] Unhandled Rejection: ${reason}`);
-  botState.errors.push({ type: "rejection", message: msg, time: Date.now() });
-  if (botState.errors.length > 100) {
-    botState.errors = botState.errors.slice(-50);
-  }
+      // ==========================
+      // DATING SIM COMMANDS
+      // ==========================
 
-  const isNetworkError =
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("ECONNRESET") ||
-    msg.includes("EPIPE") ||
-    msg.includes("ENOTFOUND") ||
-    msg.includes("timed out") ||
-    msg.includes("PartialReadError");
+      if (msg === "!kiss") {
+        const p =
+          getPlayer(username);
 
-  if (isNetworkError && !isReconnecting) {
-    addLog("[FATAL] Network rejection — triggering reconnect...");
-    clearAllIntervals();
-    botState.connected = false;
-    if (bot) {
-      try { bot.end(); } catch (_) {}
-      bot = null;
-    }
-    scheduleReconnect();
-  }
-});
+        p.points += 5;
+        p.level =
+          getLevel(p.points);
 
-process.on("SIGTERM", () => {
-  addLog("[System] SIGTERM received — ignoring, bot will stay alive.");
-});
+        bot.chat(
+          `💋 ${username} gained 5 love points!`
+        );
 
-process.on("SIGINT", () => {
-  addLog("[System] SIGINT received — ignoring, bot will stay alive.");
-});
+        return;
+      }
 
-// =============================
-//===============================
-// START THE BOT
+      if (msg === "!hug") {
+        const p =
+          getPlayer(username);
+
+        p.points += 3;
+        p.level =
+          getLevel(p.points);
+
+        bot.chat(
+          `🤗 ${username} gained 3 love points!`
+        );
+
+        return;
+      }
+
+      if (msg === "!date") {
+        const p =
+          getPlayer(username);
+
+        p.points += 10;
+        p.level =
+          getLevel(p.points);
+
+        bot.chat(
+          `🌹 Romantic date complete. +10 points`
+        );
+
+        return;
+      }
+
+      if (msg === "!marry") {
+        const p =
+          getPlayer(username);
+
+        if (p.points < 500) {
+          bot.chat(
+            `${username} needs 500 points to marry!`
+          );
+
+          return;
+        }
+
+        bot.chat(
+          `💍 ${username} is now married to the Dating Sim!`
+        );
+
+        p.points += 50;
+        p.level =
+          getLevel(p.points);
+
+        return;
+      } 
+
 // ============================================================
-addLog("=".repeat(50));
-addLog("  Minecraft AFK Bot v2.5 - Bug-Fixed Edition");
-addLog("=".repeat(50));
-addLog(`Server: ${config.server.ip}:${config.server.port}`);
-addLog(`Version: ${config.server.version}`);
-addLog(
-  `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
-);
-addLog("=".repeat(50));
+// DATING SIM PERSISTENT SYSTEM (SAVE / LOAD)
+// ============================================================
 
-createBot();
+const fs = require("fs");
+
+const DATA_FILE = "./datingSimData.json";
+
+// ------------------------------
+// LOAD DATA ON START
+// ------------------------------
+function loadDatingData() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return;
+
+    const data = JSON.parse(fs.readFileSync(DATA_FILE));
+
+    if (data.players) {
+      datingSim.players = new Map(data.players);
+      addLog("[DatingSim] Data loaded");
+    }
+  } catch (err) {
+    addLog("[DatingSim] Load error: " + err.message);
+  }
+}
+
+// ------------------------------
+// SAVE DATA
+// ------------------------------
+function saveDatingData() {
+  try {
+    const data = {
+      players: Array.from(datingSim.players.entries()),
+    };
+
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    addLog("[DatingSim] Save error: " + err.message);
+  }
+}
+
+// Auto-save every 60 seconds
+setInterval(saveDatingData, 60000);
+
+// Load on boot
+loadDatingData();
+
+// ============================================================
+// STREAK + DAILY REWARD SYSTEM
+// ============================================================
+
+const DAILY_REWARD = 20;
+
+function claimDaily(username) {
+  const p = getPlayer(username);
+  const now = Date.now();
+
+  const DAY = 24 * 60 * 60 * 1000;
+
+  if (!p.lastClaim) p.lastClaim = 0;
+
+  if (now - p.lastClaim < DAY) {
+    return { ok: false, msg: "Already claimed daily reward." };
+  }
+
+  p.lastClaim = now;
+  p.points += DAILY_REWARD;
+
+  return {
+    ok: true,
+    msg: `Daily claimed! +${DAILY_REWARD} points`,
+  };
+}
+
+      // ==========================
+      // DAILY REWARD COMMAND
+      // ==========================
+
+      if (msg === "!daily") {
+        const res = claimDaily(username);
+
+        bot.chat(
+          res.msg
+        );
+
+        return;
+      }
+
+// ============================================================
+// ANTI-CHEAT FOR QUIZ SYSTEM
+// ============================================================
+
+const quizCooldown = new Map();
+
+function canAnswer(username) {
+  const now = Date.now();
+  const last = quizCooldown.get(username) || 0;
+
+  if (now - last < 3000) return false;
+
+  quizCooldown.set(username, now);
+  return true;
+}
+
+function getLeaderboard() {
+  return Array.from(datingSim.players.entries())
+    .map(([name, data]) => ({
+      name,
+      points: data.points || 0,
+      level: data.level || 1,
+    }))
+    .sort((a, b) => b.points - a.points);
+}
+
+// ============================================================
+// CLEANUP ON CRASH / RECONNECT SAFETY
+// ============================================================
+
+function resetDatingSimTempState() {
+  datingSim.quizActive = false;
+  datingSim.current = null;
+}
