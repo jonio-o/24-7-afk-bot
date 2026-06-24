@@ -2081,13 +2081,3 @@ addLog(
 addLog("=".repeat(50));
 
 createBot();
-
-  bot.once("spawn", () => {
-  if (spawnHandled) return;
-  spawnHandled = true;
-
-  simpleGame = new SimpleGame(bot);
-  simpleGame.start();
-
-  addLog("[Bot] SimpleGame started");
-});
