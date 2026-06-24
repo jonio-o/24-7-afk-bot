@@ -9,6 +9,20 @@ const express = require("express");
 const http = require("http");
 const https = require("https");
 
+const mineflayer = require("mineflayer");
+const LoveGame = require("./loveGame");
+
+const bot = mineflayer.createBot({
+    host: "your server",
+    username: "bot name"
+});
+
+const game = new LoveGame(bot);
+
+bot.once("spawn", () => {
+    game.start();
+});
+
 // ============================================================
 // EXPRESS SERVER - Keep Render/Aternos alive
 // ============================================================
