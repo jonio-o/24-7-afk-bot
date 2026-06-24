@@ -9,7 +9,7 @@ const express = require("express");
 const http = require("http");
 const https = require("https");
 
-
+const SimpleGame = require("./simpleGame");
 
 // ============================================================
 // EXPRESS SERVER - Keep Render/Aternos alive
@@ -27,6 +27,8 @@ let botState = {
   errors: [],
   wasThrottled: false,
 };
+
+let simpleGame = null;
 
 // Health check endpoint for monitoring
 app.get('/', (req, res) => {
@@ -2079,3 +2081,13 @@ addLog(
 addLog("=".repeat(50));
 
 createBot();
+
+  bot.once("spawn", () => {
+  if (spawnHandled) return;
+  spawnHandled = true;
+
+  simpleGame = new SimpleGame(bot);
+  simpleGame.start();
+
+  addLog("[Bot] SimpleGame started");
+});
