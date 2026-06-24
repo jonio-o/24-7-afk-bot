@@ -1396,128 +1396,129 @@ function scheduleReconnect() {
 // ============================================================
 function initializeModules(bot, mcData, defaultMove) {
 
-  // ============================================================
-// 💘 DATING SIM MODULE
+// ============================================================
+// 💘 DATING SIM SYSTEM (AUTO RANDOM PLAYER MODE)
 // ============================================================
 
 const datingSim = {
   points: {},
   level: {},
-  leaderboard: {},
 
-  init() {
-    addLog("[DatingSim] Initialized");
+  init(bot) {
+    addLog("[DatingSim] Auto-question system started");
 
-    // auto-save leaderboard every 60s
+    // MAIN LOOP: every 5 minutes ask random player
     addInterval(() => {
-      this.saveLeaderboard();
-    }, 60000);
+      if (!bot || !botState.connected) return;
+
+      const players = Object.keys(bot.players).filter(
+        (p) => p !== bot.username && bot.players[p]?.entity
+      );
+
+      if (players.length === 0) return;
+
+      const target = players[Math.floor(Math.random() * players.length)];
+
+      this.ask(bot, target);
+    }, 5 * 60 * 1000); // 5 minutes
   },
 
-  getUser(user) {
+  get(user) {
     if (!this.points[user]) {
       this.points[user] = 0;
       this.level[user] = 1;
     }
   },
 
-  addPoints(user, amount) {
-    this.getUser(user);
-
-    const levelMultiplier = this.level[user] * 0.15;
-    const final = Math.floor(amount * (1 + levelMultiplier));
-
-    this.points[user] += final;
-
-    // level up system
-    if (this.points[user] > this.level[user] * 100) {
-      this.level[user]++;
-      addLog(`[DatingSim] ${user} leveled up to ${this.level[user]}`);
-    }
-
-    return final;
-  },
-
-  removePoints(user, amount) {
-    this.getUser(user);
-    this.points[user] -= amount;
-
-    if (this.points[user] < 0) this.points[user] = 0;
-  },
-
-  getQuestionDifficulty(user) {
-    this.getUser(user);
+  difficulty(user) {
+    this.get(user);
     return Math.min(10, this.level[user]);
   },
 
-  generateQuestion(user) {
-    const difficulty = this.getQuestionDifficulty(user);
+  question(user) {
+    const lvl = this.difficulty(user);
 
-    // “AI-like” progressive questions
     const questions = [
       {
-        q: "What is the emotional meaning of trust in relationships?",
-        a: "stability",
+        q: "What is more important in a relationship: honesty or comfort?",
+        a: "honesty",
       },
       {
-        q: "If someone avoids communication, what is a healthy response?",
-        a: "talk calmly",
+        q: "If someone is sad, what should you do first?",
+        a: "listen",
       },
       {
-        q: "What matters more: control or understanding?",
-        a: "understanding",
+        q: "What builds stronger trust over time?",
+        a: "consistency",
       },
       {
-        q: "What is the core of a strong relationship?",
-        a: "respect",
+        q: "Is love more about feelings or actions?",
+        a: "actions",
+      },
+      {
+        q: "What breaks trust the fastest?",
+        a: "lying",
       },
     ];
 
-    const index = Math.min(difficulty - 1, questions.length - 1);
-    return questions[index];
+    return questions[Math.min(lvl - 1, questions.length - 1)];
   },
 
   ask(bot, user) {
-    const q = this.generateQuestion(user);
+    const q = this.question(user);
 
-    bot.chat(`💘 Question for ${user}: ${q.q}`);
-    bot.chat(`Reply using: !answer <your answer>`);
+    bot.chat(`💘 Hey ${user}! Dating Question:`);
+    bot.chat(`❓ ${q.q}`);
+    bot.chat(`💬 Type: !answer <your answer>`);
+    bot.chat(`⏳ Difficulty: Level ${this.difficulty(user)}`);
   },
 
   answer(bot, user, msg) {
-    const q = this.generateQuestion(user);
-    const answer = msg.toLowerCase().replace("!answer", "").trim();
+    const q = this.question(user);
+    const ans = msg.toLowerCase().replace("!answer", "").trim();
 
-    const difficulty = this.getQuestionDifficulty(user);
+    this.get(user);
 
-    const reward = 10 + difficulty * 5;
-    const penalty = 8 + difficulty * 6;
+    const lvl = this.level[user];
+    const reward = 10 + lvl * 4;
+    const penalty = 8 + lvl * 5;
 
-    if (answer.includes(q.a)) {
-      const gained = this.addPoints(user, reward);
-      bot.chat(`✅ Correct! +${gained} points`);
-      addLog(`[DatingSim] ${user} answered correctly`);
+    if (ans.includes(q.a)) {
+      this.points[user] += reward;
+
+      if (this.points[user] > lvl * 120) {
+        this.level[user]++;
+        bot.chat(`💖 ${user} leveled up to Dating Level ${this.level[user]}!`);
+      } else {
+        bot.chat(`✅ Correct! +${reward} love points`);
+      }
+
     } else {
-      this.removePoints(user, penalty);
-      bot.chat(`❌ Wrong! -${penalty} points`);
-      addLog(`[DatingSim] ${user} answered incorrectly`);
+      this.points[user] = Math.max(0, this.points[user] - penalty);
+      bot.chat(`💔 Wrong! -${penalty} love points`);
     }
   },
 
-  leaderboardTop() {
-    return Object.entries(this.points)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([u, p], i) => `${i + 1}. ${u} - ${p} pts`)
-      .join("\n");
+  stats(bot, user) {
+    this.get(user);
+    bot.chat(
+      `💘 ${user} | Points: ${this.points[user]} | Level: ${this.level[user]}`
+    );
   },
 
-  saveLeaderboard() {
-    // optional persistence hook
+  leaderboard(bot) {
+    const top = Object.entries(this.points)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map((x, i) => `${i + 1}. ${x[0]} - ${x[1]} 💖`);
+
+    bot.chat("💘 Love Leaderboard:");
+    top.forEach((l) => bot.chat(l));
   },
 };
 
 datingSim.init();
+datingSim.init(bot);
   
   addLog("[Modules] Initializing all modules...");
 
@@ -1980,54 +1981,20 @@ function chatModule(bot) {
   bot.on("chat", (username, message) => {
 
 // 💘 Dating sim commands
-if (message.startsWith("!love")) {
-  datingSim.ask(bot, username);
-  return;
-}
-
 if (message.startsWith("!answer")) {
   datingSim.answer(bot, username, message);
   return;
 }
 
 if (message === "!points") {
-  datingSim.getUser(username);
-  bot.chat(`💖 ${username} has ${datingSim.points[username]} points (Level ${datingSim.level[username]})`);
+  datingSim.stats(bot, username);
   return;
 }
 
 if (message === "!leaderboard") {
-  bot.chat("💘 Top Lovers:\n" + datingSim.leaderboardTop());
+  datingSim.leaderboard(bot);
   return;
 }
-    
-    if (!bot || username === bot.username) return;
-
-    try {
-      // FIX: send chat events to Discord if enabled
-      if (
-        config.discord &&
-        config.discord.enabled &&
-        config.discord.events &&
-        config.discord.events.chat
-      ) {
-        sendDiscordWebhook(`💬 **${username}**: ${message}`, 0x7289da);
-      }
-
-      if (config.chat && config.chat.respond) {
-        const lowerMsg = message.toLowerCase();
-        if (lowerMsg.includes("hello") || lowerMsg.includes("hi")) {
-          bot.chat(`Hello, ${username}!`);
-        }
-        if (message.startsWith("!tp ")) {
-          const target = message.split(" ")[1];
-          if (target) bot.chat(`/tp ${target}`);
-        }
-      }
-    } catch (e) {
-      addLog("[Chat] Error:", e.message);
-    }
-  });
 }
 
 // ============================================================
