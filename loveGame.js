@@ -28,23 +28,36 @@ class LoveGame {
 
         this.randomChats = [
             "What’s your favorite color?",
-            "Do you think I like you?",
+            "Do you like me?",
             "Would you stay with me forever?",
-            "Pick me... if you dare 💖"
+            "I’m watching you... 💖"
         ];
     }
 
-    start(getPlayers, sendMessage) {
-        this.getPlayers = getPlayers;
-        this.sendMessage = sendMessage;
+    start() {
+        // ask random player every 5 minutes
+        setInterval(() => {
+            this.askRandomPlayer();
+        }, 5 * 60 * 1000);
 
-        setInterval(() => this.askRandomPlayer(), 5 * 60 * 1000);
-        setInterval(() => this.randomSpeak(), 2 * 60 * 1000);
+        // random chat every 2 minutes
+        setInterval(() => {
+            this.randomSpeak();
+        }, 2 * 60 * 1000);
+
+        // IMPORTANT: listen to chat
+        this.bot.on("chat", (username, message) => {
+            this.handleMessage(username, message);
+        });
+    }
+
+    getPlayers() {
+        return Object.keys(this.bot.players);
     }
 
     askRandomPlayer() {
-        const players = this.getPlayers?.();
-        if (!players || players.length === 0) return;
+        const players = this.getPlayers().filter(p => p !== this.bot.username);
+        if (players.length === 0) return;
 
         const player = players[Math.floor(Math.random() * players.length)];
         const q = this.questions[Math.floor(Math.random() * this.questions.length)];
@@ -52,51 +65,44 @@ class LoveGame {
         this.currentTarget = player;
         this.currentAnswer = q.correct;
 
-        this.sendMessage(
-            `💖 Hey ${player}! Answer this:\n` +
-            `${q.question}\n` +
-            `1) ${q.options[0]}\n` +
-            `2) ${q.options[1]}\n` +
-            `3) ${q.options[2]}\n` +
-            `4) ${q.options[3]}`
+        this.bot.chat(
+            `💖 ${player}, answer this: ${q.question} | ` +
+            `1) ${q.options[0]} 2) ${q.options[1]} 3) ${q.options[2]} 4) ${q.options[3]}`
         );
     }
 
     handleMessage(player, message) {
         const text = message.toLowerCase();
 
-        // 💖 POINT CHECK SYSTEM
-        if (text === "!love" || text === "!points" || text === "!lovecheck") {
+        // 💖 CHECK POINTS SYSTEM
+        if (text === "!love" || text === "!points") {
             const points = this.lovePoints[player] || 0;
 
-            let status = "Unknown 💭";
-
+            let status = "Stranger 😐";
             if (points >= 50) status = "Soulmate 💖";
             else if (points >= 30) status = "Crush 💕";
             else if (points >= 10) status = "Friend 🙂";
-            else if (points >= 0) status = "Stranger 😐";
-            else status = "Rejected 💔";
+            else if (points < 0) status = "Rejected 💔";
 
-            return this.sendMessage(
-                `💖 ${player}, your love points: ${points}\n` +
-                `💌 Status: ${status}`
+            return this.bot.chat(
+                `💖 ${player}: ${points} love points | ${status}`
             );
         }
 
-        // 💬 random chat responses
+        // 💬 RANDOM CHAT RESPONSES
         if (text.includes("favorite color")) {
-            return this.sendMessage(`💖 My favorite color is BLACK... like my lonely heart.`);
+            return this.bot.chat(`💖 My favorite color is BLACK... like the void.`);
         }
 
         if (text.includes("do you like me")) {
-            return this.sendMessage(`💖 Maybe... check your love points first 😳`);
+            return this.bot.chat(`💖 Maybe... prove it with love points.`);
         }
 
         if (text.includes("are you real")) {
-            return this.sendMessage(`💭 I exist in your imagination... and your server logs.`);
+            return this.bot.chat(`💭 Real enough to break your heart.`);
         }
 
-        // 🎯 ANSWER SYSTEM
+        // 🎯 ANSWER CHECK
         if (this.currentTarget && player === this.currentTarget) {
             const answer = parseInt(message);
 
@@ -104,10 +110,10 @@ class LoveGame {
 
             if (answer === this.currentAnswer + 1) {
                 this.lovePoints[player] += 10;
-                this.sendMessage(`💖 Correct! +10 love points (${this.lovePoints[player]})`);
+                this.bot.chat(`💖 Correct! +10 love points (${this.lovePoints[player]})`);
             } else {
                 this.lovePoints[player] -= 5;
-                this.sendMessage(`💔 Wrong... -5 love points (${this.lovePoints[player]})`);
+                this.bot.chat(`💔 Wrong! -5 love points (${this.lovePoints[player]})`);
             }
 
             this.currentTarget = null;
@@ -117,11 +123,7 @@ class LoveGame {
 
     randomSpeak() {
         const msg = this.randomChats[Math.floor(Math.random() * this.randomChats.length)];
-        this.sendMessage(`🤖 ${msg}`);
-    }
-
-    getLove(player) {
-        return this.lovePoints[player] || 0;
+        this.bot.chat(`🤖 ${msg}`);
     }
 }
 
